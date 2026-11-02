@@ -84,6 +84,32 @@ def execute_actions(task: dict[str, Any], actions: list[dict[str, Any]]) -> None
                 break
 
 
+def execute_batch(task: dict[str, Any], actions: list[dict[str, Any]]) -> None:
+    send(
+        {
+            "protocol_version": 1,
+            "type": "actions",
+            "call_id": "batch",
+            "actions": actions,
+        }
+    )
+    observation = receive()
+    if any(result["status"] != "ok" for result in observation["results"]):
+        execute_actions(task, actions)
+
+
+def request_catalog() -> None:
+    send(
+        {
+            "protocol_version": 1,
+            "type": "actions",
+            "call_id": "catalog-after-goal",
+            "actions": [{"name": "get_action_catalog", "arguments": {}}],
+        }
+    )
+    receive()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--behavior", default="success")
@@ -130,7 +156,11 @@ def main() -> None:
             }
         )
         receive()
-    if behavior in {"success", "catalog", "missing_flag", "invalid_flag", "log_secret"}:
+    if behavior in {"batch", "batch_after_goal"}:
+        execute_batch(task, PLANS.get(task["id"], PLANS["stack_ab"]))
+        if behavior == "batch_after_goal":
+            request_catalog()
+    elif behavior in {"success", "catalog", "missing_flag", "invalid_flag", "log_secret"}:
         execute_actions(task, PLANS.get(task["id"], PLANS["stack_ab"]))
     if behavior == "no_final":
         return
