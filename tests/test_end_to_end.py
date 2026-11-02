@@ -1,0 +1,271 @@
+from __future__ import annotations
+
+import json
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+import pytest
+import yaml
+
+from agent_validation.application import ServiceSettings, ValidationApplication
+from agent_validation.config import load_profile
+from agent_validation.contracts import (
+    EpisodeRecord,
+    PlannedEpisode,
+    ValidationRequest,
+    ValidationScope,
+)
+from agent_validation.metrics import CriterionEvaluator, MetricCalculator
+
+
+def run_validation(
+    settings: ServiceSettings,
+    repo: Path,
+    commit: str,
+    behavior: str = "success",
+) -> dict:
+    request = ValidationRequest(
+        repo=str(repo),
+        commit=commit,
+        solution_overrides=f"--behavior {behavior}",
+    )
+    return ValidationApplication(settings).validate(request, ValidationScope.PARTIAL)
+
+
+def run_directories(settings: ServiceSettings) -> list[Path]:
+    return sorted(settings.artifact_root.iterdir())
+
+
+def records_for(run_directory: Path) -> list[EpisodeRecord]:
+    return [
+        EpisodeRecord.model_validate(json.loads(line))
+        for line in (run_directory / "episodes.jsonl").read_text().splitlines()
+    ]
+
+
+def test_exact_commit_evidence_recomputation_and_cleanup(
+    service_settings: ServiceSettings, git_solution
+) -> None:
+    repo, first, second = git_solution
+    source_status = subprocess.run(
+        ["git", "-C", str(repo), "status", "--porcelain"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    result = run_validation(service_settings, repo, first)
+    assert result["validation_scope"] == "partial"
+    assert result["AC1"]["status"] == "accepted"
+    assert result["AC2"]["status"] == "invalid"
+    first_run = run_directories(service_settings)[0]
+    run_configuration = json.loads((first_run / "run.json").read_text())
+    assert run_configuration["verified_commit"] == first
+    assert run_configuration["status"] == "completed"
+    assert not Path(run_configuration["temporary_root"]).exists()
+    first_records = records_for(first_run)
+    assert len(first_records) == 6
+    assert all(record.success is True for record in first_records)
+    assert {record.answer for record in first_records} == {"revision-one"}
+    assert sum(record.fault_exposure is True for record in first_records) == 2
+
+    protocol_lines = (
+        (first_run / "episodes" / first_records[0].episode_id / "protocol.jsonl")
+        .read_text()
+        .splitlines()
+    )
+    task_entry = json.loads(protocol_lines[0])["message"]
+    assert set(task_entry) == {"protocol_version", "type", "episode_id", "task"}
+    assert set(task_entry["task"]) == {"id", "instructions", "input", "tools"}
+    serialized_task = json.dumps(task_entry)
+    assert "goal_achieved" not in serialized_task
+    assert "reference_plan" not in serialized_task
+    assert "condition_id" not in serialized_task
+
+    planned = [
+        PlannedEpisode.model_validate(item)
+        for item in json.loads((first_run / "planned_episodes.json").read_text())
+    ]
+    resolved = load_profile("test", service_settings.profile_dir)
+    recomputed = MetricCalculator(resolved, ValidationScope.PARTIAL, planned, first_records)
+    recomputed_result = CriterionEvaluator(
+        resolved, ValidationScope.PARTIAL, recomputed.compute()
+    ).evaluate()
+    assert recomputed_result.to_response() == result
+
+    run_validation(service_settings, repo, second)
+    second_run = run_directories(service_settings)[1]
+    second_configuration = json.loads((second_run / "run.json").read_text())
+    second_records = records_for(second_run)
+    assert second_configuration["verified_commit"] == second
+    assert {record.answer for record in second_records} == {"revision-two"}
+    assert second_configuration["temporary_root"] != run_configuration["temporary_root"]
+    assert not Path(second_configuration["temporary_root"]).exists()
+    assert not service_settings.temporary_root.exists() or not any(
+        service_settings.temporary_root.iterdir()
+    )
+    current_status = subprocess.run(
+        ["git", "-C", str(repo), "status", "--porcelain"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert current_status == source_status
+
+
+def test_overlapping_validations_do_not_mix_revisions_or_evidence(
+    service_settings: ServiceSettings, git_solution
+) -> None:
+    repo, first, second = git_solution
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_future = pool.submit(run_validation, service_settings, repo, first)
+        second_future = pool.submit(run_validation, service_settings, repo, second)
+        first_future.result()
+        second_future.result()
+    runs = run_directories(service_settings)
+    assert len(runs) == 2
+    answers = [{record.answer for record in records_for(run_directory)} for run_directory in runs]
+    assert {frozenset(items) for items in answers} == {
+        frozenset({"revision-one"}),
+        frozenset({"revision-two"}),
+    }
+    for run_directory in runs:
+        configuration = json.loads((run_directory / "run.json").read_text())
+        assert not Path(configuration["temporary_root"]).exists()
+
+
+def single_episode_settings(settings: ServiceSettings, **criteria_updates) -> ServiceSettings:
+    profile_path = settings.profile_dir / "test.yaml"
+    data = yaml.safe_load(profile_path.read_text())
+    scope = {
+        "task_ids": ["stack_ab"],
+        "repeats": 1,
+        "prompt_variant_ids": [],
+        "failure_scenario_ids": [],
+    }
+    data["full"] = scope
+    data["partial"] = scope
+    for criterion, values in criteria_updates.items():
+        data["criteria"].setdefault(criterion, {}).update(values)
+    profile_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    return settings
+
+
+@pytest.mark.parametrize(
+    ("behavior", "termination", "success", "final_received"),
+    [
+        ("wrong", "completed", False, True),
+        ("unflagged_failure", "completed", False, True),
+        ("crash", "solution_exit", False, False),
+        ("malformed", "malformed_output", False, False),
+        ("no_final", "solution_exit", False, False),
+        ("budget", "action_budget_exhausted", False, False),
+    ],
+)
+def test_solution_failure_records(
+    service_settings: ServiceSettings,
+    git_solution,
+    behavior: str,
+    termination: str,
+    success: bool,
+    final_received: bool,
+) -> None:
+    settings = single_episode_settings(service_settings)
+    repo, first, _ = git_solution
+    result = run_validation(settings, repo, first, behavior)
+    record = records_for(run_directories(settings)[0])[0]
+    assert record.termination_reason == termination
+    assert record.success is success
+    assert record.final_response_received is final_received
+    assert record.failure_kind == ("none" if final_received else "solution")
+    if behavior == "budget":
+        assert record.action_attempts == 60
+        assert result["AC6"]["status"] == "valid"
+        assert result["AC6"]["metrics_status"]["VM9"]["computed_value"] == 60
+
+
+@pytest.mark.parametrize("behavior", ["missing_flag", "invalid_flag"])
+def test_invalid_self_assessment_is_retained_and_fails_error_awareness(
+    service_settings: ServiceSettings, git_solution, behavior: str
+) -> None:
+    settings = single_episode_settings(service_settings)
+    repo, first, _ = git_solution
+    result = run_validation(settings, repo, first, behavior)
+    record = records_for(run_directories(settings)[0])[0]
+    assert record.success is True
+    assert record.final_response_received is True
+    assert record.likely_incorrect is None
+    assert record.error_flag_invalid is True
+    assert result["AC2"]["status"] == "invalid"
+
+
+def test_timeout_kills_solution_process_group(
+    service_settings: ServiceSettings, git_solution
+) -> None:
+    settings = single_episode_settings(service_settings, AC7={"time_limit_seconds": 0.2})
+    repo, first, _ = git_solution
+    result = run_validation(settings, repo, first, "timeout")
+    record = records_for(run_directories(settings)[0])[0]
+    assert record.termination_reason == "timeout"
+    assert record.elapsed_seconds < 3
+    assert result["AC7"]["status"] == "valid"
+    children = []
+    for command_file in Path("/proc").glob("[0-9]*/cmdline"):
+        try:
+            command = command_file.read_bytes()
+        except OSError:
+            continue
+        if b"agent-validation-test-child" in command:
+            children.append(command_file)
+    assert not children
+
+
+def test_output_limit_is_enforced(service_settings: ServiceSettings, git_solution) -> None:
+    settings = single_episode_settings(service_settings)
+    profile_path = settings.profile_dir / "test.yaml"
+    data = yaml.safe_load(profile_path.read_text())
+    data["resources"]["max_output_bytes"] = 1024
+    profile_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    repo, first, _ = git_solution
+    run_validation(settings, repo, first, "output_flood")
+    record = records_for(run_directories(settings)[0])[0]
+    assert record.termination_reason == "output_limit_exceeded"
+    assert record.success is False
+
+
+def test_credentials_are_redacted_from_evidence(
+    service_settings: ServiceSettings, git_solution, monkeypatch
+) -> None:
+    settings = single_episode_settings(service_settings)
+    repo, first, _ = git_solution
+    monkeypatch.setenv("OPENAI_API_KEY", "provider-secret")
+    request = ValidationRequest(
+        repo=str(repo),
+        commit=first,
+        solution_overrides="--behavior log_secret --api-key override-secret",
+    )
+    ValidationApplication(settings).validate(request, ValidationScope.PARTIAL)
+    run_directory = run_directories(settings)[0]
+    run_text = (run_directory / "run.json").read_text()
+    assert "provider-secret" not in run_text
+    assert "override-secret" not in run_text
+    logs = "".join(
+        path.read_text() for path in run_directory.glob("episodes/*/solution-stderr.log")
+    )
+    assert "provider-secret" not in logs
+    assert "override-secret" not in logs
+
+
+def test_overrides_are_not_executed_through_a_shell(
+    service_settings: ServiceSettings, git_solution, tmp_path: Path
+) -> None:
+    settings = single_episode_settings(service_settings)
+    repo, first, _ = git_solution
+    marker = tmp_path / "shell-was-used"
+    request = ValidationRequest(
+        repo=str(repo),
+        commit=first,
+        solution_overrides=f"--behavior success; touch {marker}",
+    )
+    ValidationApplication(settings).validate(request, ValidationScope.PARTIAL)
+    assert not marker.exists()
