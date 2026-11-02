@@ -37,3 +37,9 @@
 | Full-validation CLI | `validation_cli.py`, which requests full validation and writes the JSON result to the specified output file. |
 | Partial-validation CLI | `validation_cli_partial.py`, which requests diagnostic validation and writes the JSON result to the specified output file. |
 | HTTP endpoint | A URL path that accepts an HTTP request for full or partial validation. |
+
+### Integration and persistence layer
+
+| Term | Definition |
+|------|------------|
+| Solution interface | The versioned JSON Lines interaction protocol between the validation service and one solution process. It exchanges public task data, action requests, observations, and final responses without private correctness information. |
