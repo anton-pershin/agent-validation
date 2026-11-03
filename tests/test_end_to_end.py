@@ -198,7 +198,9 @@ def test_solution_failure_records(
     if behavior == "budget":
         assert record.action_attempts == 60
         assert result["AC6"]["status"] == "valid"
-        assert result["AC6"]["metrics_status"]["VM9"]["computed_value"] == 60
+        assert (
+            result["AC6"]["metrics_status"]["VM9/maximum_action_attempts"]["computed_value"] == 60
+        )
 
 
 @pytest.mark.parametrize("behavior", ["missing_flag", "invalid_flag"])

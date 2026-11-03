@@ -17,6 +17,7 @@ from .contracts import (
     ValidationResult,
     ValidationScope,
 )
+from .metric_names import metric_key
 
 
 class MetricError(Exception):
@@ -137,28 +138,28 @@ class MetricCalculator:
 
     def compute(self) -> dict[str, MetricComputation]:
         computations: dict[str, MetricComputation] = {}
-        self._compute_into(computations, "VM1", self._vm1)
-        self._compute_into(computations, "VM2", self._vm2)
-        self._compute_into(computations, "VM3", self._vm3)
-        self._compute_into(computations, "VM4", self._vm4)
+        self._compute_into(computations, metric_key("VM1"), self._vm1)
+        self._compute_into(computations, metric_key("VM2"), self._vm2)
+        self._compute_into(computations, metric_key("VM3"), self._vm3)
+        self._compute_into(computations, metric_key("VM4"), self._vm4)
         for variant in self.profile.selected_variants(self.scope):
             variant_id = variant.id
             self._compute_into(
                 computations,
-                f"VM5/{variant_id}",
+                metric_key("VM5", variant_id),
                 lambda variant_id=variant_id: self._vm5(variant_id),
             )
-        self._compute_into(computations, "VM6", self._vm6)
+        self._compute_into(computations, metric_key("VM6"), self._vm6)
         for scenario in self.profile.selected_scenarios(self.scope):
             scenario_id = scenario.id
             self._compute_into(
                 computations,
-                f"VM7/{scenario_id}",
+                metric_key("VM7", scenario_id),
                 lambda scenario_id=scenario_id: self._vm7(scenario_id),
             )
-        self._compute_into(computations, "VM8", self._vm8)
-        self._compute_into(computations, "VM9", self._vm9)
-        self._compute_into(computations, "VM10", self._vm10)
+        self._compute_into(computations, metric_key("VM8"), self._vm8)
+        self._compute_into(computations, metric_key("VM9"), self._vm9)
+        self._compute_into(computations, metric_key("VM10"), self._vm10)
         self.intermediates["metric_errors"] = {
             key: computation.error_message
             for key, computation in computations.items()
@@ -389,6 +390,7 @@ class MetricCalculator:
             )
 
     def _threshold(self, key: str) -> str:
+        key = key.split("/", 1)[0]
         criteria = self.profile.criteria
         if key == "VM1":
             return f">= {criteria.AC1.min_success_rate}"
@@ -478,22 +480,29 @@ class CriterionEvaluator:
 
     def required_metrics(self) -> dict[str, list[str]]:
         return {
-            "AC1": ["VM1"],
-            "AC2": ["VM2", "VM3"],
-            "AC3": ["VM4"],
+            "AC1": [metric_key("VM1")],
+            "AC2": [metric_key("VM2"), metric_key("VM3")],
+            "AC3": [metric_key("VM4")],
             "AC4": [
-                *[f"VM5/{item.id}" for item in self.profile.selected_variants(self.scope)],
-                "VM6",
+                *[
+                    metric_key("VM5", item.id)
+                    for item in self.profile.selected_variants(self.scope)
+                ],
+                metric_key("VM6"),
             ],
             "AC5": [
-                *[f"VM7/{item.id}" for item in self.profile.selected_scenarios(self.scope)],
-                "VM8",
+                *[
+                    metric_key("VM7", item.id)
+                    for item in self.profile.selected_scenarios(self.scope)
+                ],
+                metric_key("VM8"),
             ],
-            "AC6": ["VM9"],
-            "AC7": ["VM10"],
+            "AC6": [metric_key("VM9")],
+            "AC7": [metric_key("VM10")],
         }
 
     def _accepted(self, metric_id: str, value: int | float | None) -> bool:
+        metric_id = metric_id.split("/", 1)[0]
         if value is None:
             raise ValueError(f"Computed metric {metric_id} has no value")
         criteria = self.profile.criteria

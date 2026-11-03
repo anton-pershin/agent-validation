@@ -21,7 +21,7 @@ RESPONSE = {
     "AC1": {
         "status": "valid",
         "metrics_status": {
-            "VM1": {
+            "VM1/unperturbed_overall_success_rate": {
                 "computation_status": "computed",
                 "acceptance_status": "rejected",
                 "computed_value": 0.5,
