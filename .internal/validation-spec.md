@@ -128,7 +128,7 @@ HTTP endpoints accept `POST` with `Content-Type: application/json` and a JSON bo
   "AC1": {
     "status": "accepted",
     "metrics_status": {
-      "VM1": {
+      "VM1/unperturbed_overall_success_rate": {
         "computation_status": "computed",
         "acceptance_status": "accepted",
         "computed_value": 0.95,
@@ -140,7 +140,7 @@ HTTP endpoints accept `POST` with `Content-Type: application/json` and a JSON bo
 }
 ```
 
-The result uses the same top-level `AC1`, `AC2`, etc. entries and the same `metrics_status` fields as the solution constitution's HTTP contract. For a metric with multiple required instances, use a distinct `metrics_status` key for each instance (for example, `VM5/<variant-id>` or `VM7/<scenario-id>`); each entry uses the same metric-status fields shown above. The example shows one criterion and one metric; actual criterion and metric entries depend on the active profile. Use the SDD criterion statuses: `accepted` means that every metric required by the criterion is computed and meets its condition; `valid` means that all required metrics are computed and at least one does not meet its condition; `invalid` means that at least one required metric cannot be computed. Partial results are diagnostic and must not be presented as certification. They do not certify the solution as `accepted`.
+The result uses the same top-level `AC1`, `AC2`, etc. entries and the same `metrics_status` fields as the solution constitution's HTTP contract. For a metric with multiple required instances, use a distinct `metrics_status` key for each instance (for example, `VM5/prompt_variant_overall_success_rate_loss/<variant-id>` or `VM7/transient_failure_overall_success_rate_loss/<scenario-id>`); each entry uses the same metric-status fields shown above. The example shows one criterion and one metric; actual criterion and metric entries depend on the active profile. Use the SDD criterion statuses: `accepted` means that every metric required by the criterion is computed and meets its condition; `valid` means that all required metrics are computed and at least one does not meet its condition; `invalid` means that at least one required metric cannot be computed. Partial results are diagnostic and must not be presented as certification. They do not certify the solution as `accepted`.
 
 ```mermaid
 flowchart TD

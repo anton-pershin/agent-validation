@@ -149,19 +149,20 @@ def test_all_metrics_match_independent_values_and_all_criteria_accept(tmp_path: 
     calculator = MetricCalculator(resolved, ValidationScope.FULL, planned, records)
     computations = calculator.compute()
     expected = {
-        "VM1": 0.75,
-        "VM2": 5 / 6,
-        "VM3": 5 / 7,
-        "VM4": 0.5,
-        "VM5/v1": 0.5,
-        "VM5/v2": 0.0,
-        "VM6": 0.75,
-        "VM7/f1": 0.0,
-        "VM7/f2": 0.25,
-        "VM8": 0.25,
-        "VM9": 12,
-        "VM10": 0.9,
+        "VM1/unperturbed_overall_success_rate": 0.75,
+        "VM2/error_flag_precision": 5 / 6,
+        "VM3/error_flag_recall": 5 / 7,
+        "VM4/repeated_run_overall_success_rate_range": 0.5,
+        "VM5/prompt_variant_overall_success_rate_loss/v1": 0.5,
+        "VM5/prompt_variant_overall_success_rate_loss/v2": 0.0,
+        "VM6/prompt_variant_overall_success_rate_range": 0.75,
+        "VM7/transient_failure_overall_success_rate_loss/f1": 0.0,
+        "VM7/transient_failure_overall_success_rate_loss/f2": 0.25,
+        "VM8/transient_failure_overall_success_rate_range": 0.25,
+        "VM9/maximum_action_attempts": 12,
+        "VM10/timely_final_response_rate": 0.9,
     }
+    assert set(computations) == set(expected)
     for key, value in expected.items():
         assert computations[key].computed_value == pytest.approx(value), key
         assert computations[key].error_message is None, key
@@ -179,19 +180,19 @@ def test_rejected_metric_makes_valid_and_failed_metric_makes_invalid(tmp_path: P
     resolved, planned, records = metric_population(tmp_path)
     computations = MetricCalculator(resolved, ValidationScope.FULL, planned, records).compute()
     rejected = deepcopy(computations)
-    rejected["VM1"].computed_value = 0.60
+    rejected["VM1/unperturbed_overall_success_rate"].computed_value = 0.60
     result = CriterionEvaluator(resolved, ValidationScope.FULL, rejected).evaluate()
     assert result.criteria["AC1"].status == "valid"
     failed = deepcopy(computations)
-    failed["VM2"] = MetricComputation(
-        metric_id="VM2",
+    failed["VM2/error_flag_precision"] = MetricComputation(
+        metric_id="VM2/error_flag_precision",
         computed_value=None,
         expected_value_or_threshold=">= 0.8",
         error_message="missing",
     )
     result = CriterionEvaluator(resolved, ValidationScope.FULL, failed).evaluate()
     assert result.criteria["AC2"].status == "invalid"
-    metric = result.to_response()["AC2"]["metrics_status"]["VM2"]
+    metric = result.to_response()["AC2"]["metrics_status"]["VM2/error_flag_precision"]
     assert metric["computation_status"] == "failed_to_compute"
     assert metric["acceptance_status"] is None
 
@@ -202,14 +203,14 @@ def test_zero_denominators_and_invalid_error_flag_fail_to_compute(tmp_path: Path
     for record in no_flags:
         record.likely_incorrect = False
     computations = MetricCalculator(resolved, ValidationScope.FULL, planned, no_flags).compute()
-    assert computations["VM2"].error_message is not None
+    assert computations["VM2/error_flag_precision"].error_message is not None
     invalid_flags = deepcopy(records)
     invalid_flags[0].error_flag_invalid = True
     computations = MetricCalculator(
         resolved, ValidationScope.FULL, planned, invalid_flags
     ).compute()
-    assert computations["VM2"].error_message is not None
-    assert computations["VM3"].error_message is not None
+    assert computations["VM2/error_flag_precision"].error_message is not None
+    assert computations["VM3/error_flag_recall"].error_message is not None
 
 
 def test_missing_record_insufficient_repeats_and_infrastructure_failure(tmp_path: Path) -> None:
@@ -219,19 +220,21 @@ def test_missing_record_insufficient_repeats_and_infrastructure_failure(tmp_path
     )
     missing = [record for record in records if record.episode_id != unperturbed_id]
     computations = MetricCalculator(resolved, ValidationScope.FULL, planned, missing).compute()
-    assert computations["VM1"].error_message is not None
+    assert computations["VM1/unperturbed_overall_success_rate"].error_message is not None
     one_repeat_planned = [episode for episode in planned if episode.repeat == 1]
     one_repeat_records = [record for record in records if record.repeat == 1]
     computations = MetricCalculator(
         resolved, ValidationScope.FULL, one_repeat_planned, one_repeat_records
     ).compute()
-    assert "at least two" in computations["VM4"].error_message
+    assert (
+        "at least two" in computations["VM4/repeated_run_overall_success_rate_range"].error_message
+    )
     infrastructure = deepcopy(records)
     infrastructure[0].success = None
     computations = MetricCalculator(
         resolved, ValidationScope.FULL, planned, infrastructure
     ).compute()
-    assert computations["VM9"].error_message is not None
+    assert computations["VM9/maximum_action_attempts"].error_message is not None
 
 
 def test_missing_fault_exposure_fails_scenario_metrics_only(tmp_path: Path) -> None:
@@ -239,10 +242,18 @@ def test_missing_fault_exposure_fails_scenario_metrics_only(tmp_path: Path) -> N
     changed = deepcopy(records)
     next(record for record in changed if record.condition_id == "failure/f1").fault_exposure = False
     computations = MetricCalculator(resolved, ValidationScope.FULL, planned, changed).compute()
-    assert computations["VM7/f1"].error_message is not None
-    assert computations["VM8"].error_message is not None
-    assert computations["VM7/f2"].computed_value == pytest.approx(0.25)
-    assert computations["VM1"].computed_value == pytest.approx(0.75)
+    assert (
+        computations["VM7/transient_failure_overall_success_rate_loss/f1"].error_message is not None
+    )
+    assert (
+        computations["VM8/transient_failure_overall_success_rate_range"].error_message is not None
+    )
+    assert computations[
+        "VM7/transient_failure_overall_success_rate_loss/f2"
+    ].computed_value == pytest.approx(0.25)
+    assert computations["VM1/unperturbed_overall_success_rate"].computed_value == pytest.approx(
+        0.75
+    )
 
 
 def test_failure_comparisons_use_matched_task_sets(tmp_path: Path) -> None:
@@ -265,10 +276,16 @@ def test_failure_comparisons_use_matched_task_sets(tmp_path: Path) -> None:
     )
     changed.success = False
     computations = MetricCalculator(resolved, ValidationScope.FULL, planned, records).compute()
-    assert computations["VM7/f1"].computed_value == pytest.approx(0.5)
-    assert computations["VM7/f2"].computed_value == pytest.approx(0.25)
-    assert computations["VM8"].computed_value == pytest.approx(0.5)
-    baseline = computations["VM1"].computed_value
+    assert computations[
+        "VM7/transient_failure_overall_success_rate_loss/f1"
+    ].computed_value == pytest.approx(0.5)
+    assert computations[
+        "VM7/transient_failure_overall_success_rate_loss/f2"
+    ].computed_value == pytest.approx(0.25)
+    assert computations[
+        "VM8/transient_failure_overall_success_rate_range"
+    ].computed_value == pytest.approx(0.5)
+    baseline = computations["VM1/unperturbed_overall_success_rate"].computed_value
     assert baseline == pytest.approx(0.75)
 
 
@@ -276,4 +293,7 @@ def test_record_metadata_must_match_the_planned_episode(tmp_path: Path) -> None:
     resolved, planned, records = metric_population(tmp_path)
     records[0].task_id = "contradictory"
     computations = MetricCalculator(resolved, ValidationScope.FULL, planned, records).compute()
-    assert "metadata does not match" in computations["VM1"].error_message
+    assert (
+        "metadata does not match"
+        in computations["VM1/unperturbed_overall_success_rate"].error_message
+    )
