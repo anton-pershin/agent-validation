@@ -35,6 +35,10 @@ class ServiceSettings:
     max_active_validations: int = 4
     max_total_episodes: int = 32
 
+    def __post_init__(self) -> None:
+        if self.max_active_validations < 1 or self.max_total_episodes < 1:
+            raise ValueError("Validation capacity settings must be at least 1")
+
     @classmethod
     def from_environment(cls) -> ServiceSettings:
         return cls(

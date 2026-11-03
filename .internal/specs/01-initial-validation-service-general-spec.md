@@ -181,7 +181,7 @@ flowchart TD
   class FullCLI,PartialCLI,API,Resolver,Profiles,Planner,Coordinator,Executor,Revision,Connector,Blocks,Faults,Store,Contracts,Collector,Calculator,Evaluator,Builder created
 ```
 
-A validation request creates one temporary checkout and one fresh virtual environment. The coordinator installs the solution without editable mode and starts a new solution process for every episode. It resets the checkout and Blocks World state between episodes. Evidence is stored outside these temporary resources so cleanup cannot remove audit data.
+A validation request creates one temporary checkout and one fresh virtual environment. The coordinator installs the solution without editable mode and starts a new solution process for every episode. Each episode receives an independent runtime copy, HOME directory, and workspace. The coordinator resets the checkout and Blocks World state between episodes. Evidence is stored outside these temporary resources so cleanup cannot remove audit data.
 
 ##### Solution interface
 

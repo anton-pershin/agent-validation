@@ -271,6 +271,31 @@ def test_credentials_are_redacted_from_evidence(
         assert "override-secret" not in content, path
 
 
+def test_short_and_proxy_secrets_are_redacted_from_all_evidence(
+    service_settings: ServiceSettings, git_solution, monkeypatch
+) -> None:
+    settings = single_episode_settings(service_settings)
+    repo, first, _ = git_solution
+    monkeypatch.setenv("OPENAI_API_KEY", "Z9!")
+    monkeypatch.setenv("HTTPS_PROXY", "https://user:px@proxy.invalid/")
+    monkeypatch.setenv("NO_PROXY", "*")
+    monkeypatch.setenv("no_proxy", "*")
+    request = ValidationRequest(
+        repo=str(repo),
+        commit=first,
+        solution_overrides="--behavior log_secret --api-key s3",
+    )
+    ValidationApplication(settings).validate(request, ValidationScope.PARTIAL)
+    run_directory = run_directories(settings)[0]
+    for path in run_directory.rglob("*"):
+        if not path.is_file():
+            continue
+        content = path.read_text(encoding="utf-8", errors="replace")
+        assert "Z9!" not in content, path
+        assert "px" not in content, path
+        assert "s3" not in content, path
+
+
 def test_overrides_are_not_executed_through_a_shell(
     service_settings: ServiceSettings, git_solution, tmp_path: Path
 ) -> None:

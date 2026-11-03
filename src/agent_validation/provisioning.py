@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .config import ResolvedProfile
 from .errors import ProvisioningError
-from .process_tree import terminate_process_tree
+from .process_tree import ProcessTreeTracker, terminate_process_tree
 from .security import (
     parse_solution_overrides,
     provisioning_environment,
@@ -46,17 +46,21 @@ class RevisionPreparer:
         self.virtual_environment = self.temporary_root / "venv"
         self.homes = self.temporary_root / "homes"
         self.workspaces = self.temporary_root / "workspaces"
+        self.episode_runtimes = self.temporary_root / "episode-runtimes"
         self.verified_commit: str | None = None
         self.dependency_manifest = ""
         self.cleanup_error: str | None = None
         self.events: list[dict[str, object]] = []
         self._reset_lock = threading.Lock()
+        self._runtime_lock = threading.Lock()
+        self._episode_venvs: dict[str, Path] = {}
         self._closed = False
 
     def __enter__(self) -> RevisionPreparer:
         try:
             self.homes.mkdir()
             self.workspaces.mkdir()
+            self.episode_runtimes.mkdir()
             self._run(
                 ["git", "clone", "--no-hardlinks", "--", self.repo, str(self.checkout)],
                 "clone repository",
@@ -106,7 +110,6 @@ class RevisionPreparer:
                 "record solution dependencies",
                 self.resolved_profile.profile.resources.git_timeout_seconds,
             )
-            self._set_tree_writable(self.virtual_environment, writable=False)
             return self
         except Exception:
             self.close()
@@ -119,18 +122,30 @@ class RevisionPreparer:
     def python(self) -> Path:
         return self.virtual_environment / "bin" / "python"
 
-    def solution_command(self) -> list[str]:
+    def solution_command(self, episode_id: str) -> list[str]:
+        runtime = self._episode_runtime(episode_id)
         return [
-            str(self.python),
+            str(runtime / "bin" / "python"),
             "-m",
             self.resolved_profile.profile.solution_module,
             *self.override_arguments,
         ]
 
     def episode_environment(self, episode_id: str) -> dict[str, str]:
+        runtime = self._episode_runtime(episode_id)
         home = self.homes / episode_id
         home.mkdir(exist_ok=False)
-        return solution_environment(self.resolved_profile.profile, self.virtual_environment, home)
+        return solution_environment(self.resolved_profile.profile, runtime, home)
+
+    def _episode_runtime(self, episode_id: str) -> Path:
+        """Give every episode a mutable but independent copy of the installed runtime."""
+        with self._runtime_lock:
+            if episode_id in self._episode_venvs:
+                return self._episode_venvs[episode_id]
+            runtime = self.episode_runtimes / episode_id
+            shutil.copytree(self.virtual_environment, runtime, symlinks=True)
+            self._episode_venvs[episode_id] = runtime
+            return runtime
 
     def episode_workspace(self, episode_id: str) -> Path:
         workspace = self.workspaces / episode_id
@@ -164,8 +179,6 @@ class RevisionPreparer:
             return
         self._closed = True
         try:
-            if self.virtual_environment.exists():
-                self._set_tree_writable(self.virtual_environment, writable=True)
             if self.temporary_root.exists():
                 shutil.rmtree(self.temporary_root)
         except OSError as exc:
@@ -186,6 +199,8 @@ class RevisionPreparer:
             )
         except OSError as exc:
             raise ProvisioningError(f"Cannot {stage}: {self._redact(str(exc))}") from exc
+        tracker = ProcessTreeTracker(process.pid)
+        tracker.start()
         threads = [
             threading.Thread(
                 target=capture.read,
@@ -204,11 +219,9 @@ class RevisionPreparer:
         failure: ProvisioningError | None = None
         while process.poll() is None:
             if capture.exceeded:
-                terminate_process_tree(process, resources.process_shutdown_seconds)
                 failure = ProvisioningError(f"Output limit exceeded while attempting to {stage}")
                 break
             if time.monotonic() > deadline:
-                terminate_process_tree(process, resources.process_shutdown_seconds)
                 failure = ProvisioningError(f"Timed out while attempting to {stage}")
                 break
             time.sleep(0.01)
@@ -217,8 +230,16 @@ class RevisionPreparer:
                 process.wait(timeout=resources.process_shutdown_seconds)
             except subprocess.TimeoutExpired:
                 failure = ProvisioningError(f"Cannot finish {stage}")
-                terminate_process_tree(process, resources.process_shutdown_seconds)
-        terminate_process_tree(process, resources.process_shutdown_seconds)
+        cleanup_error = terminate_process_tree(
+            process, resources.process_shutdown_seconds, tracker.stop()
+        )
+        if cleanup_error:
+            message = f"Cannot clean up {stage}: {cleanup_error}"
+            failure = (
+                ProvisioningError(f"{failure}; {message}")
+                if failure is not None
+                else ProvisioningError(message)
+            )
         for thread in threads:
             thread.join(timeout=resources.process_shutdown_seconds)
         if failure is None and capture.exceeded:
@@ -242,15 +263,6 @@ class RevisionPreparer:
 
     def _redact(self, value: str) -> str:
         return redact_text(value, self.secret_values)
-
-    @staticmethod
-    def _set_tree_writable(root: Path, writable: bool) -> None:
-        for path in sorted(root.rglob("*"), key=lambda item: len(item.parts), reverse=True):
-            try:
-                mode = path.stat().st_mode
-                path.chmod(mode | 0o200 if writable else mode & ~0o222)
-            except OSError:
-                continue
 
 
 class _BoundedCapture:

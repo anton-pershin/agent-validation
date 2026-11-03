@@ -77,13 +77,45 @@ def test_provisioning_timeout_kills_escaped_descendants(
 ) -> None:
     resolved = load_profile("test", service_settings.profile_dir)
     revision = RevisionPreparer("/unused", "a" * 40, "", resolved, tmp_path / "temporary")
-    child = "import os,time; os.setsid(); time.sleep(60)  # agent-validation-provisioning-child"
+    child = (
+        "import os,signal,time; os.setsid(); "
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "time.sleep(60)  # agent-validation-provisioning-child"
+    )
     command = (
         "import subprocess,sys,time; "
         f"subprocess.Popen([sys.executable,'-c',{child!r}]); time.sleep(60)"
     )
     with pytest.raises(ProvisioningError, match="Timed out"):
         revision._run([sys.executable, "-c", command], "test timeout", 0.1)
+    revision.close()
+    children = []
+    for command_file in Path("/proc").glob("[0-9]*/cmdline"):
+        try:
+            content = command_file.read_bytes()
+        except OSError:
+            continue
+        if b"agent-validation-provisioning-child" in content:
+            children.append(command_file)
+    assert not children
+
+
+def test_provisioning_kills_escaped_child_when_parent_exits_first(
+    service_settings: ServiceSettings, tmp_path: Path
+) -> None:
+    resolved = load_profile("test", service_settings.profile_dir)
+    revision = RevisionPreparer("/unused", "a" * 40, "", resolved, tmp_path / "temporary")
+    child = (
+        "import os,signal,time; os.setsid(); "
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "time.sleep(60)  # agent-validation-provisioning-child"
+    )
+    command = (
+        "import subprocess,sys,time; "
+        f"subprocess.Popen([sys.executable,'-c',{child!r}], "
+        "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); time.sleep(0.2)"
+    )
+    revision._run([sys.executable, "-c", command], "test parent exit", 5)
     revision.close()
     children = []
     for command_file in Path("/proc").glob("[0-9]*/cmdline"):

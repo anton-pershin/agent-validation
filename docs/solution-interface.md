@@ -8,7 +8,7 @@ The validation service starts one process for each episode:
 python -m reliable_agent [solution_overrides]
 ```
 
-The process runs in the fresh virtual environment created for the validation request. The service uses no shell to parse overrides. Each episode has a new process, HOME, workspace, and environment state. The installed virtual environment is read-only during episode execution.
+The process runs in the fresh virtual environment created for the validation request. The service uses no shell to parse overrides. Each episode has a new process, HOME, workspace, environment state, and virtual-environment runtime copy. Changes to installed files in one episode do not affect another episode.
 
 Standard input and standard output carry one JSON object per line. Standard output must not contain logs. Write logs to standard error. One action call can be outstanding at a time. A call can contain one action or a batch.
 

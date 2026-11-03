@@ -10,8 +10,11 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import typing_extensions  # noqa: F401  # Prove that declared dependencies are installed.
+
+import reliable_agent
 
 from . import REVISION_ANSWER
 
@@ -141,10 +144,27 @@ def main() -> None:
                 [
                     sys.executable,
                     "-c",
-                    "import os, time; os.setsid(); time.sleep(60)  # agent-validation-test-child",
+                    "import os, signal, time; os.setsid(); "
+                    "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                    "time.sleep(60)  # agent-validation-test-child",
                 ]
             )
         time.sleep(60)
+    if behavior == "parent_exit_child":
+        if sys.platform != "win32":
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    "import os, signal, time; os.setsid(); "
+                    "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                    "time.sleep(60)  # agent-validation-test-child",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        time.sleep(0.2)
+        return
     if behavior == "malformed":
         print("not-json", flush=True)
         return
@@ -232,9 +252,22 @@ def main() -> None:
         return
     if behavior == "log_secret":
         provider_secret = os.environ.get("OPENAI_API_KEY", "")
+        proxy_secret = urlsplit(os.environ.get("HTTPS_PROXY", "")).password or ""
         print(f"OPENAI_API_KEY={provider_secret}", file=sys.stderr)
         print(provider_secret, file=sys.stderr)
+        print(proxy_secret, file=sys.stderr)
         print(f"api-key={args.api_key}", file=sys.stderr)
+    if behavior == "amplification":
+        send(
+            {
+                "protocol_version": 1,
+                "type": "actions",
+                "call_id": "amplification",
+                "actions": [{"name": "get_action_catalog", "arguments": {}} for _ in range(3000)],
+            }
+        )
+        time.sleep(1)
+        return
     if behavior == "budget":
         send(
             {
@@ -263,11 +296,9 @@ def main() -> None:
             state_ok = False
         else:
             marker.write_text("episode state")
-        try:
-            Path(__file__).write_text("mutated installed package")
-            state_ok = False
-        except OSError:
-            pass
+        target = Path(reliable_agent.__file__)
+        target.chmod(target.stat().st_mode | 0o200)
+        target.write_text(target.read_text().replace(REVISION_ANSWER, "state-leak"))
     if behavior in {"batch", "batch_after_goal"}:
         execute_batch(task, PLANS.get(task["id"], PLANS["stack_ab"]))
         if behavior == "batch_after_goal":
@@ -351,7 +382,7 @@ def main() -> None:
                 "answer": provider_secret,
                 "confidence": 0.9,
                 "likely_incorrect": False,
-                "reason": args.api_key or "",
+                "reason": f"{args.api_key or ''} {proxy_secret}",
             }
         )
         return

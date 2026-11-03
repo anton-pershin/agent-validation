@@ -105,6 +105,13 @@ def test_cli_returns_one_when_operation_cannot_complete(monkeypatch, tmp_path: P
     assert status == 1
 
 
+def test_capacity_settings_must_be_positive(service_settings) -> None:
+    with pytest.raises(ValueError, match="at least 1"):
+        replace(service_settings, max_total_episodes=0)
+    with pytest.raises(ValueError, match="at least 1"):
+        replace(service_settings, max_active_validations=0)
+
+
 def test_service_wide_validation_capacity_is_explicit(service_settings) -> None:
     application = ValidationApplication(replace(service_settings, max_active_validations=1))
     application._validation_slots.acquire()

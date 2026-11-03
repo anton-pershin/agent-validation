@@ -17,7 +17,7 @@ from .errors import (
     SolutionProtocolError,
     SolutionTimeoutError,
 )
-from .process_tree import terminate_process_tree
+from .process_tree import ProcessTreeTracker, terminate_process_tree
 
 
 class SolutionProcess:
@@ -50,6 +50,7 @@ class SolutionProcess:
         self._stderr_limit_exceeded = False
         self._stderr_lock = threading.Lock()
         self._stderr_thread: threading.Thread | None = None
+        self._tree_tracker: ProcessTreeTracker | None = None
 
     def start(self) -> None:
         self.process = subprocess.Popen(
@@ -62,6 +63,8 @@ class SolutionProcess:
             bufsize=0,
             start_new_session=True,
         )
+        self._tree_tracker = ProcessTreeTracker(self.process.pid)
+        self._tree_tracker.start()
         if self.process.stdin is not None:
             os.set_blocking(self.process.stdin.fileno(), False)
         if self.process.stdout is not None:
@@ -73,12 +76,22 @@ class SolutionProcess:
         )
         self._stderr_thread.start()
 
-    def send(self, message: dict[str, Any], deadline: float) -> None:
+    def send(
+        self,
+        message: dict[str, Any],
+        deadline: float,
+        *,
+        solution_controlled: bool = False,
+    ) -> None:
         process = self._require_process()
         if process.stdin is None:
             raise SolutionExitedError("Solution standard input is unavailable")
         encoded = (json.dumps(message, ensure_ascii=False) + "\n").encode("utf-8")
         if len(encoded) > max(self.max_output_bytes, 1_000_000):
+            if solution_controlled:
+                raise SolutionOutputLimitError(
+                    "Solution-induced observation exceeds the configured byte limit"
+                )
             raise ValueError("Outgoing protocol message exceeds the configured byte limit")
         remaining = memoryview(encoded)
         while remaining:
@@ -164,7 +177,8 @@ class SolutionProcess:
                 process.stdin.close()
             except OSError:
                 pass
-        self.cleanup_error = terminate_process_tree(process, self.shutdown_seconds)
+        tracked = self._tree_tracker.stop() if self._tree_tracker else set()
+        self.cleanup_error = terminate_process_tree(process, self.shutdown_seconds, tracked)
         if self._stderr_thread is not None:
             self._stderr_thread.join(timeout=self.shutdown_seconds)
             if self._stderr_thread.is_alive():

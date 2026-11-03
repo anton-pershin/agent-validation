@@ -61,7 +61,7 @@ class EpisodeExecutor:
             workspace = self.revision.episode_workspace(planned.episode_id)
             resources = self.profile.resources
             process = SolutionProcess(
-                self.revision.solution_command(),
+                self.revision.solution_command(planned.episode_id),
                 workspace,
                 self.revision.episode_environment(planned.episode_id),
                 max_output_bytes=resources.max_output_bytes,
@@ -144,7 +144,7 @@ class EpisodeExecutor:
                     }
                     self._check_deadline(deadline)
                     try:
-                        process.send(observation, deadline)
+                        process.send(observation, deadline, solution_controlled=True)
                     except SolutionExitedError:
                         if not budget_exceeded:
                             raise

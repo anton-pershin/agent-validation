@@ -53,6 +53,14 @@ _RUNTIME_SYSTEM_ENV_NAMES = {
     "no_proxy",
 }
 _SYSTEM_ENV_NAMES = _RUNTIME_SYSTEM_ENV_NAMES | _PROVISIONING_ONLY_ENV_NAMES
+_CREDENTIAL_URL_ENV_NAMES = {
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "PIP_INDEX_URL",
+    "PIP_EXTRA_INDEX_URL",
+}
 
 
 def validate_commit(commit: str) -> str:
@@ -83,7 +91,7 @@ def redact_text(value: str, secret_values: set[str] | None = None) -> str:
     value = _BEARER_RE.sub(r"\1<redacted>", value)
     value = _ASSIGNMENT_SECRET_RE.sub(r"\1<redacted>", value)
     for secret in sorted(secret_values or set(), key=len, reverse=True):
-        if len(secret) >= 4:
+        if secret:
             value = value.replace(secret, "<redacted>")
     return value
 
@@ -110,7 +118,11 @@ def redact_data(value: Any, secret_values: set[str] | None = None) -> Any:
 def collect_secret_values(request: ValidationRequest, profile: ValidationProfile) -> set[str]:
     """Collect exact values that must not appear in any retained run artifact."""
     secrets: set[str] = set()
-    for name in set(profile.environment.passthrough) | _PROVISIONING_ONLY_ENV_NAMES:
+    for name in (
+        set(profile.environment.passthrough)
+        | _PROVISIONING_ONLY_ENV_NAMES
+        | _CREDENTIAL_URL_ENV_NAMES
+    ):
         value = os.environ.get(name)
         if value:
             secrets.add(value)
@@ -130,7 +142,7 @@ def collect_secret_values(request: ValidationRequest, profile: ValidationProfile
                 secrets.add(arguments[index + 1])
                 index += 1
         index += 1
-    return {secret for secret in secrets if len(secret) >= 4}
+    return {secret for secret in secrets if secret}
 
 
 def provisioning_environment() -> dict[str, str]:

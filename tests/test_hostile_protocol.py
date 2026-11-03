@@ -160,6 +160,23 @@ def test_home_and_installed_package_state_do_not_leak_between_episodes(
     assert {record.answer for record in records} == {"revision-one"}
 
 
+def test_solution_induced_oversized_observation_is_a_solution_failure(
+    service_settings: ServiceSettings, git_solution
+) -> None:
+    settings = one_episode(service_settings, time_limit=10)
+    path = settings.profile_dir / "test.yaml"
+    data = yaml.safe_load(path.read_text())
+    data["criteria"]["AC6"] = {"max_action_attempts": 5000}
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    repo, first, _ = git_solution
+    run_validation(settings, repo, first, "amplification")
+    record = only_record(settings)
+    assert record.termination_reason == "output_limit_exceeded"
+    assert record.failure_kind == "solution"
+    assert record.action_attempts == 3000
+    assert record.success is False
+
+
 def test_escaped_session_child_is_terminated(
     service_settings: ServiceSettings, git_solution
 ) -> None:
@@ -167,6 +184,24 @@ def test_escaped_session_child_is_terminated(
     repo, first, _ = git_solution
     run_validation(settings, repo, first, "timeout_escape")
     assert only_record(settings).termination_reason == "timeout"
+    children = []
+    for command_file in Path("/proc").glob("[0-9]*/cmdline"):
+        try:
+            command = command_file.read_bytes()
+        except OSError:
+            continue
+        if b"agent-validation-test-child" in command:
+            children.append(command_file)
+    assert not children
+
+
+def test_escaped_child_is_killed_when_parent_exits_first(
+    service_settings: ServiceSettings, git_solution
+) -> None:
+    settings = one_episode(service_settings)
+    repo, first, _ = git_solution
+    run_validation(settings, repo, first, "parent_exit_child")
+    assert only_record(settings).termination_reason == "solution_exit"
     children = []
     for command_file in Path("/proc").glob("[0-9]*/cmdline"):
         try:

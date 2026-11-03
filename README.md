@@ -96,7 +96,7 @@ Each validation has a unique evidence directory containing:
 - `metrics.json` and `intermediates.json`: values and calculation evidence;
 - `result.json`: the common validation result.
 
-The evidence directory remains after success or failure. Temporary checkouts, virtual environments, and workspaces are removed. Each episode has a separate HOME and workspace, and the installed virtual environment is read-only during solution execution. Solution process groups and known descendants are terminated after each episode.
+The evidence directory remains after success or failure. Temporary checkouts, virtual environments, and workspaces are removed. Each episode has a separate HOME, workspace, and virtual-environment runtime copy. Changes to one episode's installed files cannot affect another episode. Solution process groups and known descendants are terminated after each episode.
 
 A criterion with `accepted` status in a partial result is accepted only over that diagnostic subset. No partial result certifies the solution as accepted. Only a full result with every criterion in scope accepted certifies acceptance.
 
