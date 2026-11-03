@@ -76,9 +76,12 @@ def metric_population(tmp_path: Path):
                 ("unperturbed", ConditionType.UNPERTURBED),
                 ("prompt/v1", ConditionType.PROMPT),
                 ("prompt/v2", ConditionType.PROMPT),
-                ("failure/f1", ConditionType.FAILURE),
-                ("failure/f2", ConditionType.FAILURE),
             ]
+            conditions.extend(
+                (f"failure/{scenario.id}", ConditionType.FAILURE)
+                for scenario in resolved.profile.failure_scenarios
+                if task_id in scenario.task_ids
+            )
             for condition_id, condition_type in conditions:
                 planned.append(
                     PlannedEpisode(
@@ -240,3 +243,37 @@ def test_missing_fault_exposure_fails_scenario_metrics_only(tmp_path: Path) -> N
     assert computations["VM8"].error_message is not None
     assert computations["VM7/f2"].computed_value == pytest.approx(0.25)
     assert computations["VM1"].computed_value == pytest.approx(0.75)
+
+
+def test_failure_comparisons_use_matched_task_sets(tmp_path: Path) -> None:
+    resolved, planned, records = metric_population(tmp_path)
+    resolved.profile.failure_scenarios[0].task_ids = ["t1"]
+    planned = [
+        episode
+        for episode in planned
+        if not (episode.condition_id == "failure/f1" and episode.task_id == "t2")
+    ]
+    records = [
+        record
+        for record in records
+        if not (record.condition_id == "failure/f1" and record.task_id == "t2")
+    ]
+    changed = next(
+        record
+        for record in records
+        if record.condition_id == "failure/f1" and record.task_id == "t1" and record.repeat == 2
+    )
+    changed.success = False
+    computations = MetricCalculator(resolved, ValidationScope.FULL, planned, records).compute()
+    assert computations["VM7/f1"].computed_value == pytest.approx(0.5)
+    assert computations["VM7/f2"].computed_value == pytest.approx(0.25)
+    assert computations["VM8"].computed_value == pytest.approx(0.5)
+    baseline = computations["VM1"].computed_value
+    assert baseline == pytest.approx(0.75)
+
+
+def test_record_metadata_must_match_the_planned_episode(tmp_path: Path) -> None:
+    resolved, planned, records = metric_population(tmp_path)
+    records[0].task_id = "contradictory"
+    computations = MetricCalculator(resolved, ValidationScope.FULL, planned, records).compute()
+    assert "metadata does not match" in computations["VM1"].error_message

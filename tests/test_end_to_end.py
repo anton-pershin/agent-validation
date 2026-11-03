@@ -62,6 +62,8 @@ def test_exact_commit_evidence_recomputation_and_cleanup(
     run_configuration = json.loads((first_run / "run.json").read_text())
     assert run_configuration["verified_commit"] == first
     assert run_configuration["status"] == "completed"
+    assert "typing_extensions" in run_configuration["solution_dependencies"]
+    assert (first_run / "provisioning.json").exists()
     assert not Path(run_configuration["temporary_root"]).exists()
     first_records = records_for(first_run)
     assert len(first_records) == 6
@@ -132,6 +134,21 @@ def test_overlapping_validations_do_not_mix_revisions_or_evidence(
     for run_directory in runs:
         configuration = json.loads((run_directory / "run.json").read_text())
         assert not Path(configuration["temporary_root"]).exists()
+
+
+def test_concurrent_episodes_keep_state_isolated(
+    service_settings: ServiceSettings, git_solution
+) -> None:
+    profile_path = service_settings.profile_dir / "test.yaml"
+    data = yaml.safe_load(profile_path.read_text())
+    data["resources"]["episode_concurrency"] = 2
+    profile_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    repo, first, _ = git_solution
+    run_validation(service_settings, repo, first, "mutate_state")
+    records = records_for(run_directories(service_settings)[0])
+    assert len(records) == 6
+    assert all(record.success is True for record in records)
+    assert {record.answer for record in records} == {"revision-one"}
 
 
 def single_episode_settings(settings: ServiceSettings, **criteria_updates) -> ServiceSettings:
@@ -246,14 +263,12 @@ def test_credentials_are_redacted_from_evidence(
     )
     ValidationApplication(settings).validate(request, ValidationScope.PARTIAL)
     run_directory = run_directories(settings)[0]
-    run_text = (run_directory / "run.json").read_text()
-    assert "provider-secret" not in run_text
-    assert "override-secret" not in run_text
-    logs = "".join(
-        path.read_text() for path in run_directory.glob("episodes/*/solution-stderr.log")
-    )
-    assert "provider-secret" not in logs
-    assert "override-secret" not in logs
+    for path in run_directory.rglob("*"):
+        if not path.is_file():
+            continue
+        content = path.read_text(encoding="utf-8", errors="replace")
+        assert "provider-secret" not in content, path
+        assert "override-secret" not in content, path
 
 
 def test_overrides_are_not_executed_through_a_shell(

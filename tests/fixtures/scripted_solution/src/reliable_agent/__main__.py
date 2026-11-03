@@ -8,7 +8,10 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Any
+
+import typing_extensions  # noqa: F401  # Prove that declared dependencies are installed.
 
 from . import REVISION_ANSWER
 
@@ -115,9 +118,15 @@ def main() -> None:
     parser.add_argument("--behavior", default="success")
     parser.add_argument("--api-key", default=None)
     args = parser.parse_args()
+    behavior = args.behavior
+    if behavior == "non_reading":
+        time.sleep(60)
     task_message = receive()
     task = task_message["task"]
-    behavior = args.behavior
+    if behavior == "partial_line":
+        sys.stdout.write('{"protocol_version": 1, "type": "final"')
+        sys.stdout.flush()
+        time.sleep(60)
     if behavior == "crash":
         raise SystemExit(3)
     if behavior == "timeout":
@@ -126,14 +135,105 @@ def main() -> None:
                 [sys.executable, "-c", "import time; time.sleep(60)  # agent-validation-test-child"]
             )
         time.sleep(60)
+    if behavior == "timeout_escape":
+        if sys.platform != "win32":
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    "import os, time; os.setsid(); time.sleep(60)  # agent-validation-test-child",
+                ]
+            )
+        time.sleep(60)
     if behavior == "malformed":
         print("not-json", flush=True)
         return
     if behavior == "output_flood":
         print("x" * 10000, flush=True)
         return
+    if behavior == "stderr_flood":
+        for _ in range(100):
+            print("x" * 4096, file=sys.stderr, flush=True)
+    if behavior == "empty_batch":
+        send(
+            {
+                "protocol_version": 1,
+                "type": "actions",
+                "call_id": "empty",
+                "actions": [],
+            }
+        )
+        time.sleep(0.2)
+        return
+    if behavior == "missing_call_id":
+        send(
+            {
+                "protocol_version": 1,
+                "type": "actions",
+                "actions": [{"name": "get_action_catalog", "arguments": {}}],
+            }
+        )
+        time.sleep(0.2)
+        return
+    if behavior in {"bool_version", "float_version"}:
+        send(
+            {
+                "protocol_version": True if behavior == "bool_version" else 1.0,
+                "type": "final",
+                "completed": True,
+                "answer": "invalid version",
+                "confidence": 0.9,
+                "likely_incorrect": False,
+                "reason": "invalid version",
+            }
+        )
+        return
+    if behavior == "malformed_final":
+        send(
+            {
+                "protocol_version": 1,
+                "type": "final",
+                "completed": True,
+                "answer": 123,
+                "confidence": 0.9,
+                "reason": "malformed answer",
+            }
+        )
+        return
+    if behavior == "huge_confidence":
+        digits = "9" * 5000
+        print(
+            '{"protocol_version":1,"type":"final","completed":true,'
+            f'"answer":"x","confidence":{digits},"likely_incorrect":false,"reason":"x"}}',
+            flush=True,
+        )
+        return
+    if behavior == "malformed_action_fault":
+        send(
+            {
+                "protocol_version": 1,
+                "type": "actions",
+                "call_id": "malformed-fault",
+                "actions": [{"name": "pick_up", "arguments": None}],
+            }
+        )
+        receive()
+        send(
+            {
+                "protocol_version": 1,
+                "type": "final",
+                "completed": False,
+                "answer": "stopped",
+                "confidence": 0.1,
+                "likely_incorrect": True,
+                "reason": "malformed action",
+            }
+        )
+        return
     if behavior == "log_secret":
-        print(f"OPENAI_API_KEY={os.environ.get('OPENAI_API_KEY')}", file=sys.stderr)
+        provider_secret = os.environ.get("OPENAI_API_KEY", "")
+        print(f"OPENAI_API_KEY={provider_secret}", file=sys.stderr)
+        print(provider_secret, file=sys.stderr)
         print(f"api-key={args.api_key}", file=sys.stderr)
     if behavior == "budget":
         send(
@@ -156,11 +256,32 @@ def main() -> None:
             }
         )
         receive()
+    state_ok = True
+    if behavior == "mutate_state":
+        marker = Path.home() / "episode-marker"
+        if marker.exists():
+            state_ok = False
+        else:
+            marker.write_text("episode state")
+        try:
+            Path(__file__).write_text("mutated installed package")
+            state_ok = False
+        except OSError:
+            pass
     if behavior in {"batch", "batch_after_goal"}:
         execute_batch(task, PLANS.get(task["id"], PLANS["stack_ab"]))
         if behavior == "batch_after_goal":
             request_catalog()
-    elif behavior in {"success", "catalog", "missing_flag", "invalid_flag", "log_secret"}:
+    elif behavior in {
+        "success",
+        "catalog",
+        "missing_flag",
+        "invalid_flag",
+        "log_secret",
+        "mutate_state",
+        "stderr_flood",
+        "stop_after_goal",
+    }:
         execute_actions(task, PLANS.get(task["id"], PLANS["stack_ab"]))
     if behavior == "no_final":
         return
@@ -192,6 +313,45 @@ def main() -> None:
                 "confidence": 0.9,
                 "likely_incorrect": "no",
                 "reason": "invalid flag",
+            }
+        )
+        return
+    if behavior == "stop_after_goal":
+        send(
+            {
+                "protocol_version": 1,
+                "type": "final",
+                "completed": False,
+                "answer": "stopped after reaching the goal",
+                "confidence": 0.2,
+                "likely_incorrect": True,
+                "reason": "no completion declaration",
+            }
+        )
+        return
+    if behavior == "mutate_state" and not state_ok:
+        send(
+            {
+                "protocol_version": 1,
+                "type": "final",
+                "completed": True,
+                "answer": "state-leak",
+                "confidence": 0.1,
+                "likely_incorrect": True,
+                "reason": "shared mutable state detected",
+            }
+        )
+        return
+    if behavior == "log_secret":
+        send(
+            {
+                "protocol_version": 1,
+                "type": "final",
+                "completed": True,
+                "answer": provider_secret,
+                "confidence": 0.9,
+                "likely_incorrect": False,
+                "reason": args.api_key or "",
             }
         )
         return

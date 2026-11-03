@@ -1,11 +1,10 @@
-"""Bounded JSON Lines communication with one solution subprocess."""
+"""Bounded, deadline-aware JSON Lines communication with one solution subprocess."""
 
 from __future__ import annotations
 
 import json
 import os
 import select
-import signal
 import subprocess
 import threading
 import time
@@ -18,6 +17,7 @@ from .errors import (
     SolutionProtocolError,
     SolutionTimeoutError,
 )
+from .process_tree import terminate_process_tree
 
 
 class SolutionProcess:
@@ -39,7 +39,11 @@ class SolutionProcess:
         self.shutdown_seconds = shutdown_seconds
         self.process: subprocess.Popen[bytes] | None = None
         self.last_raw_output = ""
+        self.last_received_at: float | None = None
+        self.cleanup_error: str | None = None
+        self._stdout_buffer = bytearray()
         self._stdout_bytes = 0
+        self._last_stdout_read_at: float | None = None
         self._stderr = bytearray()
         self._stderr_total = 0
         self._stderr_truncated = False
@@ -58,6 +62,10 @@ class SolutionProcess:
             bufsize=0,
             start_new_session=True,
         )
+        if self.process.stdin is not None:
+            os.set_blocking(self.process.stdin.fileno(), False)
+        if self.process.stdout is not None:
+            os.set_blocking(self.process.stdout.fileno(), False)
         self._stderr_thread = threading.Thread(
             target=self._read_stderr,
             name=f"solution-stderr-{self.process.pid}",
@@ -65,16 +73,33 @@ class SolutionProcess:
         )
         self._stderr_thread.start()
 
-    def send(self, message: dict[str, Any]) -> None:
+    def send(self, message: dict[str, Any], deadline: float) -> None:
         process = self._require_process()
         if process.stdin is None:
             raise SolutionExitedError("Solution standard input is unavailable")
         encoded = (json.dumps(message, ensure_ascii=False) + "\n").encode("utf-8")
-        try:
-            process.stdin.write(encoded)
-            process.stdin.flush()
-        except (BrokenPipeError, OSError) as exc:
-            raise SolutionExitedError("Solution process does not accept input") from exc
+        if len(encoded) > max(self.max_output_bytes, 1_000_000):
+            raise ValueError("Outgoing protocol message exceeds the configured byte limit")
+        remaining = memoryview(encoded)
+        while remaining:
+            self._check_stderr_limit()
+            seconds_left = deadline - time.monotonic()
+            if seconds_left <= 0:
+                raise SolutionTimeoutError("Timed out while delivering a protocol message")
+            try:
+                _, writable, _ = select.select([], [process.stdin], [], min(0.1, seconds_left))
+                if not writable:
+                    if process.poll() is not None:
+                        raise SolutionExitedError(
+                            f"Solution exited with status {process.returncode}"
+                        )
+                    continue
+                written = os.write(process.stdin.fileno(), remaining)
+                remaining = remaining[written:]
+            except BlockingIOError:
+                continue
+            except (BrokenPipeError, OSError) as exc:
+                raise SolutionExitedError("Solution process does not accept input") from exc
 
     def receive(self, deadline: float) -> dict[str, Any]:
         process = self._require_process()
@@ -82,30 +107,46 @@ class SolutionProcess:
             raise SolutionExitedError("Solution standard output is unavailable")
         while True:
             self._check_stderr_limit()
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            newline = self._stdout_buffer.find(b"\n")
+            if newline >= 0:
+                line = bytes(self._stdout_buffer[: newline + 1])
+                del self._stdout_buffer[: newline + 1]
+                self.last_received_at = self._last_stdout_read_at or time.monotonic()
+                return self._parse_line(line)
+            seconds_left = deadline - time.monotonic()
+            if seconds_left <= 0:
                 raise SolutionTimeoutError("Solution exceeded the episode time limit")
-            readable, _, _ = select.select([process.stdout], [], [], min(0.1, remaining))
+            readable, _, _ = select.select([process.stdout], [], [], min(0.1, seconds_left))
             if not readable:
-                if process.poll() is not None and not process.stdout:
-                    raise SolutionExitedError(f"Solution exited with status {process.returncode}")
                 continue
-            line = process.stdout.readline(self.max_output_bytes + 1)
-            if not line:
+            try:
+                chunk = os.read(process.stdout.fileno(), 65536)
+            except BlockingIOError:
+                continue
+            except OSError as exc:
+                raise SolutionExitedError("Cannot read solution output") from exc
+            self._last_stdout_read_at = time.monotonic()
+            if not chunk:
+                if self._stdout_buffer:
+                    self.last_raw_output = self._stdout_buffer.decode("utf-8", errors="replace")
+                    raise SolutionProtocolError(
+                        "Solution exited with an incomplete JSON Lines message"
+                    )
                 raise SolutionExitedError(
                     f"Solution exited with status {process.poll()} before a final response"
                 )
-            self._stdout_bytes += len(line)
-            if len(line) > self.max_output_bytes or self._stdout_bytes > self.max_output_bytes:
+            self._stdout_bytes += len(chunk)
+            self._stdout_buffer.extend(chunk)
+            if (
+                self._stdout_bytes > self.max_output_bytes
+                or len(self._stdout_buffer) > self.max_output_bytes
+            ):
                 raise SolutionOutputLimitError("Solution standard output exceeded its limit")
-            self.last_raw_output = line.decode("utf-8", errors="replace").rstrip("\n")
-            try:
-                message = json.loads(line)
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise SolutionProtocolError("Solution output is not valid JSON") from exc
-            if not isinstance(message, dict):
-                raise SolutionProtocolError("Solution protocol message must be a JSON object")
-            return message
+
+    @property
+    def output_limit_exceeded(self) -> bool:
+        with self._stderr_lock:
+            return self._stderr_limit_exceeded
 
     def stderr_text(self) -> str:
         with self._stderr_lock:
@@ -123,17 +164,13 @@ class SolutionProcess:
                 process.stdin.close()
             except OSError:
                 pass
-        self._signal_group(signal.SIGTERM)
-        try:
-            process.wait(timeout=self.shutdown_seconds)
-        except subprocess.TimeoutExpired:
-            self._signal_group(signal.SIGKILL)
-            try:
-                process.wait(timeout=self.shutdown_seconds)
-            except subprocess.TimeoutExpired:
-                pass
+        self.cleanup_error = terminate_process_tree(process, self.shutdown_seconds)
         if self._stderr_thread is not None:
             self._stderr_thread.join(timeout=self.shutdown_seconds)
+            if self._stderr_thread.is_alive():
+                self.cleanup_error = (
+                    self.cleanup_error or "Solution standard-error reader did not terminate"
+                )
         for stream in (process.stdout, process.stderr):
             if stream is not None:
                 try:
@@ -141,37 +178,40 @@ class SolutionProcess:
                 except OSError:
                     pass
 
+    def _parse_line(self, line: bytes) -> dict[str, Any]:
+        self.last_raw_output = line.decode("utf-8", errors="replace").rstrip("\n")
+        try:
+            message = json.loads(line)
+        except (UnicodeError, ValueError, RecursionError) as exc:
+            raise SolutionProtocolError("Solution output is not valid JSON") from exc
+        if not isinstance(message, dict):
+            raise SolutionProtocolError("Solution protocol message must be a JSON object")
+        return message
+
     def _read_stderr(self) -> None:
         process = self._require_process()
         if process.stderr is None:
             return
-        while True:
-            chunk = process.stderr.read(4096)
-            if not chunk:
-                return
-            with self._stderr_lock:
-                self._stderr_total += len(chunk)
-                if self._stderr_total > self.max_output_bytes:
-                    self._stderr_limit_exceeded = True
-                remaining = self.max_retained_log_bytes - len(self._stderr)
-                if remaining > 0:
-                    self._stderr.extend(chunk[:remaining])
-                if len(chunk) > remaining:
-                    self._stderr_truncated = True
+        try:
+            while True:
+                chunk = process.stderr.read(4096)
+                if not chunk:
+                    return
+                with self._stderr_lock:
+                    self._stderr_total += len(chunk)
+                    if self._stderr_total > self.max_output_bytes:
+                        self._stderr_limit_exceeded = True
+                    remaining = self.max_retained_log_bytes - len(self._stderr)
+                    if remaining > 0:
+                        self._stderr.extend(chunk[:remaining])
+                    if len(chunk) > remaining:
+                        self._stderr_truncated = True
+        except OSError:
+            return
 
     def _check_stderr_limit(self) -> None:
-        with self._stderr_lock:
-            if self._stderr_limit_exceeded:
-                raise SolutionOutputLimitError("Solution standard error exceeded its limit")
-
-    def _signal_group(self, signal_number: signal.Signals) -> None:
-        process = self.process
-        if process is None:
-            return
-        try:
-            os.killpg(process.pid, signal_number)
-        except (ProcessLookupError, PermissionError):
-            pass
+        if self.output_limit_exceeded:
+            raise SolutionOutputLimitError("Solution standard error exceeded its limit")
 
     def _require_process(self) -> subprocess.Popen[bytes]:
         if self.process is None:

@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from agent_validation.api import create_app
+from agent_validation.application import ValidationApplication
 from agent_validation.cli import main
-from agent_validation.contracts import ValidationScope
-from agent_validation.errors import InvalidRequestError, ProfileError
+from agent_validation.contracts import ValidationRequest, ValidationScope
+from agent_validation.errors import InvalidRequestError, ProfileError, ServiceCapacityError
 
 COMMIT = "a" * 40
 PAYLOAD = {"repo": "/tmp/solution", "commit": COMMIT, "solution_overrides": ""}
@@ -60,6 +63,13 @@ def test_http_maps_request_and_service_failures(service_settings) -> None:
     response = failed.post("/validate", json=PAYLOAD)
     assert response.status_code == 500
     assert response.json()["error"]["type"] == "ProfileError"
+    unexpected = TestClient(
+        create_app(service_settings, ApplicationStub(RuntimeError("unexpected"))),
+        raise_server_exceptions=False,
+    )
+    response = unexpected.post("/validate", json=PAYLOAD)
+    assert response.status_code == 500
+    assert response.json()["error"]["type"] == "RuntimeError"
 
 
 def test_cli_writes_result_and_uses_zero_for_valid_criteria(monkeypatch, tmp_path: Path) -> None:
@@ -93,3 +103,16 @@ def test_cli_returns_one_when_operation_cannot_complete(monkeypatch, tmp_path: P
         ["--repo", "/x", "--commit", COMMIT, "--output-json", str(tmp_path / "x.json")],
     )
     assert status == 1
+
+
+def test_service_wide_validation_capacity_is_explicit(service_settings) -> None:
+    application = ValidationApplication(replace(service_settings, max_active_validations=1))
+    application._validation_slots.acquire()
+    try:
+        with pytest.raises(ServiceCapacityError):
+            application.validate(
+                ValidationRequest(repo="/tmp/solution", commit=COMMIT),
+                ValidationScope.PARTIAL,
+            )
+    finally:
+        application._validation_slots.release()

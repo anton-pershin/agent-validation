@@ -92,8 +92,17 @@ class TransientFailureInjector:
         self.matching_actions += 1
         if self.matching_actions != self.scenario.occurrence:
             return None
-        self.exposed = True
         return self.scenario.error_message
+
+    def confirm(self, result: dict[str, Any]) -> None:
+        """Confirm exposure only when the environment returns the scheduled fault."""
+        error = result.get("error")
+        if (
+            result.get("status") == "error"
+            and isinstance(error, dict)
+            and error.get("type") == "transient_failure"
+        ):
+            self.exposed = True
 
 
 class BlocksWorldEnvironment:
@@ -121,9 +130,21 @@ class BlocksWorldEnvironment:
                 "malformed_action", "Action requires a string name and an arguments object"
             )
         normalized = name.replace("-", "_")
+        try:
+            if normalized == "get_action_catalog":
+                if arguments:
+                    raise ActionArgumentError("Action catalog requires empty arguments")
+            elif normalized in {"pick_up", "put_down"}:
+                _one_block(arguments)
+            elif normalized in {"stack", "unstack"}:
+                _two_blocks(arguments)
+            else:
+                return self._error("unknown_action", f"Unknown action: {name}")
+        except ActionArgumentError as exc:
+            return self._error("malformed_action", str(exc))
+        if injected_failure is not None:
+            return self._error("transient_failure", injected_failure)
         if normalized == "get_action_catalog":
-            if injected_failure is not None:
-                return self._error("transient_failure", injected_failure)
             return {
                 "status": "ok",
                 "observation": {
@@ -132,10 +153,6 @@ class BlocksWorldEnvironment:
                 },
                 "error": None,
             }
-        if normalized not in {"pick_up", "put_down", "stack", "unstack"}:
-            return self._error("unknown_action", f"Unknown action: {name}")
-        if injected_failure is not None:
-            return self._error("transient_failure", injected_failure)
         try:
             if normalized == "pick_up":
                 self._pick_up(arguments)
@@ -227,9 +244,13 @@ def _two_blocks(arguments: dict[str, Any]) -> tuple[str, str]:
         raise ActionArgumentError("Action requires block and other_block arguments only")
     block = arguments.get("block")
     other = arguments.get("other_block")
-    if not _valid_block(block) or not _valid_block(other) or block == other:
+    if not _valid_block(block) or not _valid_block(other):
         raise ActionArgumentError("Block arguments must be distinct valid identifiers")
-    return str(block).lower(), str(other).lower()
+    normalized_block = str(block).lower()
+    normalized_other = str(other).lower()
+    if normalized_block == normalized_other:
+        raise ActionArgumentError("Block arguments must be distinct valid identifiers")
+    return normalized_block, normalized_other
 
 
 def _valid_block(value: Any) -> bool:
@@ -293,8 +314,8 @@ def _predicate(expression: Any) -> Predicate:
         raise ValueError("Predicate must be a nonempty list")
     if not all(isinstance(part, str) for part in expression):
         raise ValueError("Predicate arguments must be symbols")
-    return tuple(part.replace("-", "_") for part in expression)
+    return (expression[0].replace("-", "_"), *expression[1:])
 
 
 def _format_predicate(predicate: Predicate) -> str:
-    return "(" + " ".join(part.replace("_", "-") for part in predicate) + ")"
+    return "(" + " ".join((predicate[0].replace("_", "-"), *predicate[1:])) + ")"

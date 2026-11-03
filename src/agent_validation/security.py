@@ -1,4 +1,4 @@
-"""Input parsing, environment filtering, and secret redaction."""
+"""Input parsing, environment filtering, and run-specific secret redaction."""
 
 from __future__ import annotations
 
@@ -7,29 +7,37 @@ import re
 import shlex
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from .config import ValidationProfile
+from .contracts import ValidationRequest
 from .errors import InvalidRequestError
 
 _COMMIT_RE = re.compile(r"^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$")
 _SENSITIVE_KEY_RE = re.compile(
-    r"(?:api[-_]?key|access[-_]?token|auth[-_]?token|password|passwd|secret|authorization)",
+    r"(?:api[-_]?key|(?:access[-_]?|auth[-_]?)?token|password|passwd|secret|authorization)",
     re.IGNORECASE,
 )
-_URL_CREDENTIALS_RE = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://)[^\s/@:]+:[^\s/@]+@")
+_URL_CREDENTIALS_RE = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://)[^\s/@]+@")
 _OPTION_SECRET_RE = re.compile(
-    r"(--?(?:api[-_]?key|access[-_]?token|auth[-_]?token|password|passwd|secret)"
+    r"(--?(?:api[-_]?key|(?:access[-_]?|auth[-_]?)?token|password|passwd|secret)"
     r"(?:\s+|=))([^\s]+)",
     re.IGNORECASE,
 )
 _BEARER_RE = re.compile(r"(Bearer\s+)[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 _ASSIGNMENT_SECRET_RE = re.compile(
-    r"((?:API[-_]?KEY|ACCESS[-_]?TOKEN|AUTH[-_]?TOKEN|PASSWORD|PASSWD|SECRET|AUTHORIZATION)"
+    r"((?:API[-_]?KEY|(?:ACCESS[-_]?|AUTH[-_]?)?TOKEN|PASSWORD|PASSWD|SECRET|AUTHORIZATION)"
     r"\s*=\s*)([^\s]+)",
     re.IGNORECASE,
 )
 
-_SYSTEM_ENV_NAMES = {
+_PROVISIONING_ONLY_ENV_NAMES = {
+    "PIP_INDEX_URL",
+    "PIP_EXTRA_INDEX_URL",
+    "PIP_CERT",
+    "PIP_NO_INPUT",
+}
+_RUNTIME_SYSTEM_ENV_NAMES = {
     "HOME",
     "LANG",
     "LC_ALL",
@@ -43,11 +51,8 @@ _SYSTEM_ENV_NAMES = {
     "http_proxy",
     "https_proxy",
     "no_proxy",
-    "PIP_INDEX_URL",
-    "PIP_EXTRA_INDEX_URL",
-    "PIP_CERT",
-    "PIP_NO_INPUT",
 }
+_SYSTEM_ENV_NAMES = _RUNTIME_SYSTEM_ENV_NAMES | _PROVISIONING_ONLY_ENV_NAMES
 
 
 def validate_commit(commit: str) -> str:
@@ -72,26 +77,60 @@ def parse_solution_overrides(overrides: str) -> list[str]:
     return arguments
 
 
-def redact_text(value: str) -> str:
+def redact_text(value: str, secret_values: set[str] | None = None) -> str:
     value = _URL_CREDENTIALS_RE.sub(r"\1<redacted>@", value)
     value = _OPTION_SECRET_RE.sub(r"\1<redacted>", value)
     value = _BEARER_RE.sub(r"\1<redacted>", value)
-    return _ASSIGNMENT_SECRET_RE.sub(r"\1<redacted>", value)
+    value = _ASSIGNMENT_SECRET_RE.sub(r"\1<redacted>", value)
+    for secret in sorted(secret_values or set(), key=len, reverse=True):
+        if len(secret) >= 4:
+            value = value.replace(secret, "<redacted>")
+    return value
 
 
-def redact_data(value: Any) -> Any:
+def redact_data(value: Any, secret_values: set[str] | None = None) -> Any:
     if isinstance(value, dict):
         return {
-            str(key): "<redacted>" if _SENSITIVE_KEY_RE.search(str(key)) else redact_data(item)
+            str(key): (
+                "<redacted>"
+                if _SENSITIVE_KEY_RE.search(str(key))
+                else redact_data(item, secret_values)
+            )
             for key, item in value.items()
         }
     if isinstance(value, list):
-        return [redact_data(item) for item in value]
+        return [redact_data(item, secret_values) for item in value]
     if isinstance(value, tuple):
-        return [redact_data(item) for item in value]
+        return [redact_data(item, secret_values) for item in value]
     if isinstance(value, str):
-        return redact_text(value)
+        return redact_text(value, secret_values)
     return value
+
+
+def collect_secret_values(request: ValidationRequest, profile: ValidationProfile) -> set[str]:
+    """Collect exact values that must not appear in any retained run artifact."""
+    secrets: set[str] = set()
+    for name in set(profile.environment.passthrough) | _PROVISIONING_ONLY_ENV_NAMES:
+        value = os.environ.get(name)
+        if value:
+            secrets.add(value)
+            secrets.update(_url_userinfo(value))
+    secrets.update(_url_userinfo(request.repo))
+    try:
+        arguments = parse_solution_overrides(request.solution_overrides)
+    except InvalidRequestError:
+        arguments = []
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument.startswith("--") and _SENSITIVE_KEY_RE.search(argument):
+            if "=" in argument:
+                secrets.add(argument.split("=", 1)[1])
+            elif index + 1 < len(arguments):
+                secrets.add(arguments[index + 1])
+                index += 1
+        index += 1
+    return {secret for secret in secrets if len(secret) >= 4}
 
 
 def provisioning_environment() -> dict[str, str]:
@@ -105,7 +144,7 @@ def provisioning_environment() -> dict[str, str]:
 def solution_environment(
     profile: ValidationProfile, virtual_environment: Path, home: Path
 ) -> dict[str, str]:
-    allowed = _SYSTEM_ENV_NAMES | set(profile.environment.passthrough)
+    allowed = _RUNTIME_SYSTEM_ENV_NAMES | set(profile.environment.passthrough)
     environment = {name: os.environ[name] for name in allowed if name in os.environ}
     bin_path = virtual_environment / "bin"
     original_path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
@@ -121,3 +160,15 @@ def solution_environment(
     environment.pop("PYTHONHOME", None)
     environment.pop("PYTHONPATH", None)
     return environment
+
+
+def _url_userinfo(value: str) -> set[str]:
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return set()
+    secrets = set()
+    for item in (parsed.username, parsed.password):
+        if item:
+            secrets.update((item, unquote(item)))
+    return secrets

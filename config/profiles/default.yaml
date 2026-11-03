@@ -71,6 +71,7 @@ resources:
   episode_concurrency: 1
   max_output_bytes: 1000000
   max_retained_log_bytes: 65536
+  max_provisioning_output_bytes: 1000000
   install_timeout_seconds: 300
   git_timeout_seconds: 120
   process_shutdown_seconds: 2

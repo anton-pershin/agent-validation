@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "scripted-reliable-agent"
 version = "0.1.0"
 requires-python = ">=3.11"
+dependencies = ["typing-extensions>=4.8"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

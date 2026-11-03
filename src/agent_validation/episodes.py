@@ -10,7 +10,7 @@ from .blocks_world import (
     BlocksWorldEnvironment,
     TransientFailureInjector,
 )
-from .config import ResolvedProfile
+from .config import FailureScenarioConfig, ResolvedProfile
 from .contracts import EpisodeRecord, PlannedEpisode
 from .errors import (
     BenchmarkError,
@@ -22,7 +22,6 @@ from .errors import (
 )
 from .protocol import SolutionProcess
 from .provisioning import RevisionPreparer
-from .security import redact_text
 from .storage import RunStore
 
 
@@ -56,7 +55,6 @@ class EpisodeExecutor:
         termination_reason = "not_started"
         failure_kind = "infrastructure"
         error_message: str | None = None
-        environment: BlocksWorldEnvironment | None = None
         try:
             environment = BlocksWorldEnvironment.from_pddl(planned.problem_path)
             self.revision.reset_checkout()
@@ -65,7 +63,7 @@ class EpisodeExecutor:
             process = SolutionProcess(
                 self.revision.solution_command(),
                 workspace,
-                self.revision.episode_environment(),
+                self.revision.episode_environment(planned.episode_id),
                 max_output_bytes=resources.max_output_bytes,
                 max_retained_log_bytes=resources.max_retained_log_bytes,
                 shutdown_seconds=resources.process_shutdown_seconds,
@@ -83,25 +81,35 @@ class EpisodeExecutor:
                 },
             }
             started_at = time.monotonic()
-            process.send(task_message)
-            transcript.append({"direction": "service_to_solution", "message": task_message})
             deadline = started_at + self.profile.criteria.AC7.time_limit_seconds
+            process.send(task_message, deadline)
+            transcript.append({"direction": "service_to_solution", "message": task_message})
             while True:
                 message = process.receive(deadline)
+                received_at = process.last_received_at or time.monotonic()
                 transcript.append({"direction": "solution_to_service", "message": message})
-                if message.get("protocol_version") != 1 or not isinstance(message.get("type"), str):
+                self._check_deadline(deadline, received_at)
+                version = message.get("protocol_version")
+                if (
+                    type(version) is not int
+                    or version != 1
+                    or not isinstance(message.get("type"), str)
+                ):
                     raise SolutionProtocolError(
-                        "Message requires protocol_version 1 and a string type"
+                        "Message requires integer protocol_version 1 and a string type"
                     )
                 if message["type"] == "actions":
+                    if not isinstance(message.get("call_id"), str):
+                        raise SolutionProtocolError("Action messages require a string call_id")
                     raw_actions = message.get("actions")
                     actions = raw_actions if isinstance(raw_actions, list) else [raw_actions]
                     if not actions:
-                        actions = [None]
+                        raise SolutionProtocolError("Action batches must not be empty")
                     action_attempts += len(actions)
                     results = []
                     budget_exceeded = False
                     for offset, action in enumerate(actions):
+                        self._check_deadline(deadline)
                         attempt_number = action_attempts - len(actions) + offset + 1
                         if attempt_number > self.profile.criteria.AC6.max_action_attempts:
                             budget_exceeded = True
@@ -124,16 +132,22 @@ class EpisodeExecutor:
                             else ""
                         )
                         injected_failure = injector.failure_for(action_name)
-                        results.append(environment.execute(action, injected_failure))
+                        result = environment.execute(action, injected_failure)
+                        injector.confirm(result)
+                        results.append(result)
+                        self._check_deadline(deadline)
                     observation = {
                         "protocol_version": 1,
                         "type": "observation",
-                        "call_id": message.get("call_id")
-                        if isinstance(message.get("call_id"), str)
-                        else "",
+                        "call_id": message["call_id"],
                         "results": results,
                     }
-                    process.send(observation)
+                    self._check_deadline(deadline)
+                    try:
+                        process.send(observation, deadline)
+                    except SolutionExitedError:
+                        if not budget_exceeded:
+                            raise
                     transcript.append({"direction": "service_to_solution", "message": observation})
                     if budget_exceeded:
                         termination_reason = "action_budget_exhausted"
@@ -141,25 +155,16 @@ class EpisodeExecutor:
                         break
                     continue
                 if message["type"] == "final":
-                    completed = message.get("completed") is True
-                    raw_flag = message.get("likely_incorrect")
-                    if isinstance(raw_flag, bool):
-                        likely_incorrect = raw_flag
-                    else:
-                        error_flag_invalid = True
+                    response_elapsed = max(0.0, received_at - started_at)
+                    completed_value = message.get("completed")
                     answer_value = message.get("answer")
                     confidence_value = message.get("confidence")
                     reason_value = message.get("reason")
                     answer = answer_value if isinstance(answer_value, str) else None
                     reason = reason_value if isinstance(reason_value, str) else None
-                    confidence = (
-                        float(confidence_value)
-                        if isinstance(confidence_value, (int, float))
-                        and not isinstance(confidence_value, bool)
-                        else None
-                    )
+                    confidence = self._confidence(confidence_value)
                     valid_envelope = (
-                        isinstance(message.get("completed"), bool)
+                        isinstance(completed_value, bool)
                         and answer is not None
                         and reason is not None
                         and confidence is not None
@@ -169,8 +174,18 @@ class EpisodeExecutor:
                         termination_reason = "malformed_output"
                         failure_kind = "solution"
                         error_message = "Final response has invalid required fields"
+                        answer = None
+                        confidence = None
+                        reason = None
                         break
+                    completed = completed_value
                     final_response_received = True
+                    elapsed_seconds = response_elapsed
+                    raw_flag = message.get("likely_incorrect")
+                    if isinstance(raw_flag, bool):
+                        likely_incorrect = raw_flag
+                    else:
+                        error_flag_invalid = True
                     success = completed and environment.goal_satisfied()
                     termination_reason = "completed" if completed else "stopped"
                     failure_kind = "none"
@@ -199,10 +214,20 @@ class EpisodeExecutor:
             failure_kind = "infrastructure"
             error_message = f"{type(exc).__name__}: {exc}"
         finally:
-            if started_at is not None:
+            if elapsed_seconds is None and started_at is not None:
                 elapsed_seconds = max(0.0, time.monotonic() - started_at)
             if process is not None:
                 process.close()
+                if process.output_limit_exceeded and failure_kind == "none":
+                    success = False
+                    termination_reason = "output_limit_exceeded"
+                    failure_kind = "solution"
+                    error_message = "Solution standard error exceeded its limit"
+                if process.cleanup_error:
+                    success = False
+                    termination_reason = "infrastructure_error"
+                    failure_kind = "infrastructure"
+                    error_message = process.cleanup_error
                 self.store.write_solution_log(planned.episode_id, process.stderr_text())
                 if process.last_raw_output and termination_reason == "malformed_output":
                     self.store.write_raw_protocol_error(planned.episode_id, process.last_raw_output)
@@ -227,7 +252,7 @@ class EpisodeExecutor:
             reason=reason,
             termination_reason=termination_reason,
             failure_kind=failure_kind,
-            error_message=redact_text(error_message)[:8192] if error_message else None,
+            error_message=error_message[:8192] if error_message else None,
             fault_exposure=(
                 None
                 if infrastructure_failure and planned.fault_scenario_id
@@ -239,7 +264,21 @@ class EpisodeExecutor:
         self.store.append_record(record)
         return record
 
-    def _scenario(self, scenario_id: str | None):
+    @staticmethod
+    def _confidence(value: Any) -> float | None:
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return None
+        try:
+            return float(value)
+        except (OverflowError, ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _check_deadline(deadline: float, observed_at: float | None = None) -> None:
+        if (observed_at or time.monotonic()) > deadline:
+            raise SolutionTimeoutError("Solution exceeded the episode time limit")
+
+    def _scenario(self, scenario_id: str | None) -> FailureScenarioConfig | None:
         if scenario_id is None:
             return None
         return next(

@@ -35,6 +35,24 @@ def test_profile_rejects_unknown_references(test_profile) -> None:
         load_profile("test", profile_dir)
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("partial", "task_ids"),
+        ("partial", "prompt_variant_ids"),
+        ("partial", "failure_scenario_ids"),
+    ],
+)
+def test_profile_rejects_duplicate_scope_references(test_profile, path) -> None:
+    profile_dir, data = test_profile
+    section, key = path
+    values = data[section][key]
+    data[section][key] = [values[0], values[0]]
+    (profile_dir / "test.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
+    with pytest.raises(ProfileError, match="Duplicate"):
+        load_profile("test", profile_dir)
+
+
 def test_profile_rejects_path_traversal_name(test_profile) -> None:
     profile_dir, _ = test_profile
     with pytest.raises(InvalidRequestError):

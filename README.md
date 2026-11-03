@@ -79,6 +79,8 @@ Configuration environment variables:
 - `AGENT_VALIDATION_PROFILE_DIR`: profile directory; initially `config/profiles` under the working directory.
 - `AGENT_VALIDATION_ARTIFACT_DIR`: evidence root; initially `artifacts/runs`.
 - `AGENT_VALIDATION_TEMP_DIR`: parent for temporary resources; initially `/tmp`.
+- `AGENT_VALIDATION_MAX_ACTIVE`: maximum active validations per application; initially `4`.
+- `AGENT_VALIDATION_MAX_EPISODES`: maximum concurrent episodes per application; initially `32`.
 - `AGENT_VALIDATION_HOST` and `AGENT_VALIDATION_PORT`: HTTP listen address; initially `127.0.0.1:8000`.
 
 Only provider variables named in the profile and required system variables reach the solution. Do not put credentials in the repository URL or `solution_overrides`. The service redacts common credential forms from retained configuration and logs.
@@ -89,11 +91,14 @@ Each validation has a unique evidence directory containing:
 
 - `run.json`: resolved profile, commits, scope, versions, and run status;
 - `planned_episodes.json` and `episodes.jsonl`: the complete population and observations;
+- `provisioning.json`: bounded provisioning logs and the resolved solution dependency manifest in `run.json`;
 - `episodes/<id>/`: protocol messages, solution logs, and the episode record;
 - `metrics.json` and `intermediates.json`: values and calculation evidence;
 - `result.json`: the common validation result.
 
-The evidence directory remains after success or failure. Temporary checkouts, virtual environments, and workspaces are removed. Solution process groups are terminated after each episode.
+The evidence directory remains after success or failure. Temporary checkouts, virtual environments, and workspaces are removed. Each episode has a separate HOME and workspace, and the installed virtual environment is read-only during solution execution. Solution process groups and known descendants are terminated after each episode.
+
+A criterion with `accepted` status in a partial result is accepted only over that diagnostic subset. No partial result certifies the solution as accepted. Only a full result with every criterion in scope accepted certifies acceptance.
 
 ## Tests
 

@@ -1,4 +1,4 @@
-"""Run-specific, auditable filesystem persistence."""
+"""Run-specific, auditable, redacted filesystem persistence."""
 
 from __future__ import annotations
 
@@ -14,8 +14,14 @@ from .security import redact_data, redact_text
 
 
 class RunStore:
-    def __init__(self, artifact_root: Path, run_id: str) -> None:
+    def __init__(
+        self,
+        artifact_root: Path,
+        run_id: str,
+        secret_values: set[str] | None = None,
+    ) -> None:
         self.run_directory = artifact_root.resolve() / run_id
+        self.secret_values = secret_values or set()
         self._lock = threading.Lock()
         try:
             self.run_directory.mkdir(parents=True, exist_ok=False)
@@ -35,7 +41,7 @@ class RunStore:
 
     def write_json(self, relative_path: str, value: Any, *, redact: bool = False) -> None:
         if redact:
-            value = redact_data(value)
+            value = redact_data(value, self.secret_values)
         content = json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
         self._write_bytes(relative_path, content.encode("utf-8"))
 
@@ -49,9 +55,16 @@ class RunStore:
             redact=True,
         )
 
+    def write_provisioning_events(self, events: list[dict[str, object]]) -> None:
+        self.write_json("provisioning.json", events, redact=True)
+
     def write_protocol(self, episode_id: str, messages: list[dict[str, Any]]) -> None:
         lines = [
-            json.dumps(redact_data(message), ensure_ascii=False, sort_keys=True)
+            json.dumps(
+                redact_data(message, self.secret_values),
+                ensure_ascii=False,
+                sort_keys=True,
+            )
             for message in messages
         ]
         self._write_bytes(
@@ -61,18 +74,18 @@ class RunStore:
     def write_raw_protocol_error(self, episode_id: str, raw_output: str) -> None:
         self._write_bytes(
             f"episodes/{episode_id}/invalid-output.txt",
-            (redact_text(raw_output) + "\n").encode("utf-8", errors="replace"),
+            (redact_text(raw_output, self.secret_values) + "\n").encode("utf-8", errors="replace"),
         )
 
     def write_solution_log(self, episode_id: str, log: str) -> None:
         self._write_bytes(
             f"episodes/{episode_id}/solution-stderr.log",
-            redact_text(log).encode("utf-8", errors="replace"),
+            redact_text(log, self.secret_values).encode("utf-8", errors="replace"),
         )
 
     def append_record(self, record: EpisodeRecord) -> None:
-        serialized = record.model_dump(mode="json")
-        self.write_json(f"episodes/{record.episode_id}/record.json", serialized, redact=True)
+        serialized = redact_data(record.model_dump(mode="json"), self.secret_values)
+        self.write_json(f"episodes/{record.episode_id}/record.json", serialized)
         line = json.dumps(serialized, ensure_ascii=False, sort_keys=True) + "\n"
         with self._lock:
             try:
@@ -98,6 +111,6 @@ class RunStore:
         failed = {
             **run_configuration,
             "status": "failed",
-            "error_message": redact_text(message),
+            "error_message": redact_text(message, self.secret_values),
         }
         self.write_run_configuration(failed)

@@ -25,6 +25,10 @@ class StorageError(ValidationServiceError):
     """Validation evidence cannot be persisted."""
 
 
+class ServiceCapacityError(ValidationServiceError):
+    """The configured service-wide capacity has been reached."""
+
+
 class SolutionProtocolError(Exception):
     """The solution emitted an invalid protocol message."""
 

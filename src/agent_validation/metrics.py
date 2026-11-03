@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from .config import ResolvedProfile, ScopeConfig
 from .contracts import (
+    ConditionType,
     CriterionEvaluation,
     EpisodeRecord,
     MetricComputation,
@@ -58,6 +59,81 @@ class MetricCalculator:
             self._record_by_id[record.episode_id] = record
         if set(self._record_by_id) - set(planned_ids):
             self._population_error = "Observed records contain unplanned episodes"
+        self._validate_population()
+
+    def _validate_population(self) -> None:
+        expected: set[tuple[object, ...]] = set()
+        for repeat in range(1, self.scope.repeats + 1):
+            for task_id in self.scope.task_ids:
+                expected.add((task_id, "unperturbed", ConditionType.UNPERTURBED, repeat, None))
+                for variant in self.profile.selected_variants(self.scope):
+                    expected.add(
+                        (
+                            task_id,
+                            f"prompt/{variant.id}",
+                            ConditionType.PROMPT,
+                            repeat,
+                            None,
+                        )
+                    )
+                for scenario in self.profile.selected_scenarios(self.scope):
+                    if task_id in scenario.task_ids:
+                        expected.add(
+                            (
+                                task_id,
+                                f"failure/{scenario.id}",
+                                ConditionType.FAILURE,
+                                repeat,
+                                scenario.id,
+                            )
+                        )
+        actual_keys = [self._logical_episode_key(episode) for episode in self.planned]
+        if len(set(actual_keys)) != len(actual_keys):
+            self._population_error = "Planned episodes contain duplicate logical episodes"
+        elif set(actual_keys) != expected:
+            self._population_error = "Planned episodes do not match the resolved profile population"
+        for episode in self.planned:
+            expected_fault = (
+                episode.condition_id.split("/", 1)[1]
+                if episode.condition_type == ConditionType.FAILURE
+                else None
+            )
+            if episode.fault_scenario_id != expected_fault:
+                self._population_error = (
+                    f"Planned fault metadata is inconsistent: {episode.episode_id}"
+                )
+        planned_by_id = {episode.episode_id: episode for episode in self.planned}
+        for record in self.records:
+            planned = planned_by_id.get(record.episode_id)
+            if planned is not None and self._logical_episode_key(
+                record
+            ) != self._logical_episode_key(planned):
+                self._population_error = (
+                    f"Observed episode metadata does not match its plan: {record.episode_id}"
+                )
+            if (
+                record.action_attempts is not None
+                and record.action_attempts < 0
+                or record.elapsed_seconds is not None
+                and record.elapsed_seconds < 0
+            ):
+                self._population_error = (
+                    f"Observed episode has negative measurements: {record.episode_id}"
+                )
+
+    @staticmethod
+    def _logical_episode_key(
+        episode: PlannedEpisode | EpisodeRecord,
+    ) -> tuple[object, ...]:
+        return (
+            episode.task_id,
+            episode.condition_id,
+            episode.condition_type,
+            episode.repeat,
+            episode.condition_id.split("/", 1)[1]
+            if episode.condition_type == ConditionType.FAILURE
+            else None,
+        )
 
     def compute(self) -> dict[str, MetricComputation]:
         computations: dict[str, MetricComputation] = {}
@@ -159,22 +235,48 @@ class MetricCalculator:
         return max(rates) - min(rates)
 
     def _vm7(self, scenario_id: str) -> float:
-        self._require_fault_exposure(f"failure/{scenario_id}")
-        baseline = self._overall_rate("unperturbed", "unperturbed").overall
-        scenario = self._overall_rate(f"failure/{scenario_id}", f"failure/{scenario_id}").overall
+        scenario_config = next(
+            item for item in self.profile.selected_scenarios(self.scope) if item.id == scenario_id
+        )
+        task_ids = set(self.scope.task_ids) & set(scenario_config.task_ids)
+        if not task_ids:
+            raise MetricError(f"Scenario {scenario_id} has no eligible tasks in scope")
+        condition_id = f"failure/{scenario_id}"
+        self._require_fault_exposure(condition_id, task_ids)
+        baseline = self._overall_rate(
+            "unperturbed",
+            f"unperturbed/for/failure/{scenario_id}",
+            task_ids=task_ids,
+        ).overall
+        scenario = self._overall_rate(condition_id, condition_id, task_ids=task_ids).overall
         return max(0.0, baseline - scenario)
 
     def _vm8(self) -> float:
         scenarios = self.profile.selected_scenarios(self.scope)
         if not scenarios:
             raise MetricError("VM8 requires at least one transient-failure scenario")
-        condition_ids = [
-            "unperturbed",
-            *[f"failure/{item.id}" for item in scenarios],
+        task_ids = set(self.scope.task_ids)
+        for scenario in scenarios:
+            task_ids &= set(scenario.task_ids)
+        if not task_ids:
+            raise MetricError("VM8 requires a nonempty common scenario task set")
+        rates = [
+            self._overall_rate(
+                "unperturbed",
+                "unperturbed/for/failure-range",
+                task_ids=task_ids,
+            ).overall
         ]
-        for condition_id in condition_ids[1:]:
-            self._require_fault_exposure(condition_id)
-        rates = [self._overall_rate(item, item).overall for item in condition_ids]
+        for scenario in scenarios:
+            condition_id = f"failure/{scenario.id}"
+            self._require_fault_exposure(condition_id, task_ids)
+            rates.append(
+                self._overall_rate(
+                    condition_id,
+                    f"{condition_id}/for/failure-range",
+                    task_ids=task_ids,
+                ).overall
+            )
         return max(rates) - min(rates)
 
     def _vm9(self) -> int:
@@ -205,11 +307,18 @@ class MetricCalculator:
         )
         return timely / len(records)
 
-    def _select(self, condition_id: str, repeat: int | None = None) -> list[PlannedEpisode]:
+    def _select(
+        self,
+        condition_id: str,
+        repeat: int | None = None,
+        task_ids: set[str] | None = None,
+    ) -> list[PlannedEpisode]:
         return [
             episode
             for episode in self.planned
-            if episode.condition_id == condition_id and (repeat is None or episode.repeat == repeat)
+            if episode.condition_id == condition_id
+            and (repeat is None or episode.repeat == repeat)
+            and (task_ids is None or episode.task_id in task_ids)
         ]
 
     def _records_for(self, episodes: list[PlannedEpisode]) -> list[EpisodeRecord]:
@@ -229,11 +338,17 @@ class MetricCalculator:
         return records
 
     def _overall_rate(
-        self, condition_id: str, evidence_key: str, repeat: int | None = None
+        self,
+        condition_id: str,
+        evidence_key: str,
+        repeat: int | None = None,
+        task_ids: set[str] | None = None,
     ) -> RateSummary:
-        episodes = self._select(condition_id, repeat)
+        episodes = self._select(condition_id, repeat, task_ids)
         if not episodes:
             raise MetricError(f"No planned episodes for condition {condition_id}")
+        if task_ids is not None and {episode.task_id for episode in episodes} != task_ids:
+            raise MetricError(f"Condition {condition_id} has an incomplete comparison task set")
         records = self._records_for(episodes)
         planned_by_task: dict[str, list[PlannedEpisode]] = defaultdict(list)
         for episode in episodes:
@@ -263,8 +378,8 @@ class MetricCalculator:
                 f"Completed responses have missing or invalid likely_incorrect flags: {invalid}"
             )
 
-    def _require_fault_exposure(self, condition_id: str) -> None:
-        episodes = self._select(condition_id)
+    def _require_fault_exposure(self, condition_id: str, task_ids: set[str] | None = None) -> None:
+        episodes = self._select(condition_id, task_ids=task_ids)
         records = self._records_for(episodes)
         if not records:
             raise MetricError(f"No planned episodes for condition {condition_id}")

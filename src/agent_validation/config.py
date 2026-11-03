@@ -88,6 +88,7 @@ class ResourceConfig(ProfileModel):
     episode_concurrency: int = Field(default=1, ge=1, le=32)
     max_output_bytes: int = Field(default=1_000_000, ge=1024)
     max_retained_log_bytes: int = Field(default=65536, ge=1024)
+    max_provisioning_output_bytes: int = Field(default=1_000_000, ge=1024)
     install_timeout_seconds: float = Field(default=300, gt=0)
     git_timeout_seconds: float = Field(default=120, gt=0)
     process_shutdown_seconds: float = Field(default=2, gt=0)
@@ -124,8 +125,12 @@ class ValidationProfile(ProfileModel):
             [scenario.id for scenario in self.failure_scenarios], "failure scenario"
         )
         for scenario in self.failure_scenarios:
+            _unique_ids(scenario.task_ids, f"task reference in scenario {scenario.id}")
             _require_references(scenario.task_ids, task_ids, f"scenario {scenario.id}")
         for scope_name, scope in (("full", self.full), ("partial", self.partial)):
+            _unique_ids(scope.task_ids, f"task reference in {scope_name} scope")
+            _unique_ids(scope.prompt_variant_ids, f"prompt reference in {scope_name} scope")
+            _unique_ids(scope.failure_scenario_ids, f"scenario reference in {scope_name} scope")
             _require_references(scope.task_ids, task_ids, f"{scope_name} scope")
             _require_references(scope.prompt_variant_ids, variant_ids, f"{scope_name} scope")
             _require_references(scope.failure_scenario_ids, scenario_ids, f"{scope_name} scope")

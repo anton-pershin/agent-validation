@@ -8,7 +8,7 @@ The validation service starts one process for each episode:
 python -m reliable_agent [solution_overrides]
 ```
 
-The process runs in the fresh virtual environment created for the validation request. The service uses no shell to parse overrides. Each episode has new solution and environment state.
+The process runs in the fresh virtual environment created for the validation request. The service uses no shell to parse overrides. Each episode has a new process, HOME, workspace, and environment state. The installed virtual environment is read-only during episode execution.
 
 Standard input and standard output carry one JSON object per line. Standard output must not contain logs. Write logs to standard error. One action call can be outstanding at a time. A call can contain one action or a batch.
 
@@ -65,7 +65,7 @@ Send one action or a batch:
 }
 ```
 
-Use `{"name": "get_action_catalog", "arguments": {}}` to request the action catalog. Every submitted action is an action attempt. Each batch member counts separately. Malformed, unknown, rejected, and failed actions also count.
+Use `{"name": "get_action_catalog", "arguments": {}}` to request the action catalog. `call_id` is a required string. `actions` must be a nonempty array. An empty array or invalid envelope is a protocol error with no manufactured action attempts. Every submitted action is an action attempt. Each batch member counts separately. Malformed, unknown, rejected, and failed actions also count.
 
 ## Observations
 
