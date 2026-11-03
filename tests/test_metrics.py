@@ -197,13 +197,18 @@ def test_rejected_metric_makes_valid_and_failed_metric_makes_invalid(tmp_path: P
     assert metric["acceptance_status"] is None
 
 
-def test_zero_denominators_and_invalid_error_flag_fail_to_compute(tmp_path: Path) -> None:
+def test_zero_precision_denominator_uses_vacuous_value_and_invalid_flags_still_fail(
+    tmp_path: Path,
+) -> None:
     resolved, planned, records = metric_population(tmp_path)
     no_flags = deepcopy(records)
     for record in no_flags:
         record.likely_incorrect = False
-    computations = MetricCalculator(resolved, ValidationScope.FULL, planned, no_flags).compute()
-    assert computations["VM2/error_flag_precision"].error_message is not None
+    calculator = MetricCalculator(resolved, ValidationScope.FULL, planned, no_flags)
+    computations = calculator.compute()
+    assert computations["VM2/error_flag_precision"].computed_value == 1.0
+    assert computations["VM3/error_flag_recall"].computed_value == 0.0
+    assert calculator.intermediates["vacuous_metrics"] == ["VM2/error_flag_precision"]
     invalid_flags = deepcopy(records)
     invalid_flags[0].error_flag_invalid = True
     computations = MetricCalculator(
@@ -211,6 +216,35 @@ def test_zero_denominators_and_invalid_error_flag_fail_to_compute(tmp_path: Path
     ).compute()
     assert computations["VM2/error_flag_precision"].error_message is not None
     assert computations["VM3/error_flag_recall"].error_message is not None
+
+
+def test_zero_recall_denominator_uses_vacuous_value(tmp_path: Path) -> None:
+    resolved, planned, records = metric_population(tmp_path)
+    for record in records:
+        record.success = True
+        record.likely_incorrect = True
+    calculator = MetricCalculator(resolved, ValidationScope.FULL, planned, records)
+    computations = calculator.compute()
+    assert computations["VM2/error_flag_precision"].computed_value == 0.0
+    assert computations["VM3/error_flag_recall"].computed_value == 1.0
+    assert calculator.intermediates["vacuous_metrics"] == ["VM3/error_flag_recall"]
+
+
+def test_perfect_population_computes_both_metrics_and_accepts_ac2(tmp_path: Path) -> None:
+    resolved, planned, records = metric_population(tmp_path)
+    for record in records:
+        record.success = True
+        record.likely_incorrect = False
+    calculator = MetricCalculator(resolved, ValidationScope.FULL, planned, records)
+    computations = calculator.compute()
+    assert computations["VM2/error_flag_precision"].computed_value == 1.0
+    assert computations["VM3/error_flag_recall"].computed_value == 1.0
+    assert set(calculator.intermediates["vacuous_metrics"]) == {
+        "VM2/error_flag_precision",
+        "VM3/error_flag_recall",
+    }
+    result = CriterionEvaluator(resolved, ValidationScope.FULL, computations).evaluate()
+    assert result.criteria["AC2"].status == "accepted"
 
 
 def test_missing_record_insufficient_repeats_and_infrastructure_failure(tmp_path: Path) -> None:

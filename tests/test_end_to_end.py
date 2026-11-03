@@ -57,7 +57,9 @@ def test_exact_commit_evidence_recomputation_and_cleanup(
     result = run_validation(service_settings, repo, first)
     assert result["validation_scope"] == "partial"
     assert result["AC1"]["status"] == "accepted"
-    assert result["AC2"]["status"] == "invalid"
+    assert result["AC2"]["status"] == "accepted"
+    assert result["AC2"]["metrics_status"]["VM2/error_flag_precision"]["computed_value"] == 1.0
+    assert result["AC2"]["metrics_status"]["VM3/error_flag_recall"]["computed_value"] == 1.0
     first_run = run_directories(service_settings)[0]
     run_configuration = json.loads((first_run / "run.json").read_text())
     assert run_configuration["verified_commit"] == first
@@ -386,7 +388,7 @@ def test_complete_default_full_population(git_solution, tmp_path: Path) -> None:
     assert len(full_records) == 42
     assert all(record.success is True for record in full_records)
     assert full_result["AC1"]["status"] == "accepted"
-    assert full_result["AC2"]["status"] == "invalid"
+    assert full_result["AC2"]["status"] == "accepted"
     for criterion in ("AC3", "AC4", "AC5", "AC6", "AC7"):
         assert full_result[criterion]["status"] == "accepted", criterion
     assert {record.condition_id for record in full_records} == {

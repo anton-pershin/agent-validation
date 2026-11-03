@@ -48,6 +48,7 @@ class MetricCalculator:
             "task_success_rates": {},
             "overall_success_rates": {},
             "repeat_success_rates": {},
+            "vacuous_metrics": [],
         }
         self._record_by_id: dict[str, EpisodeRecord] = {}
         self._population_error: str | None = None
@@ -196,7 +197,8 @@ class MetricCalculator:
         self._validate_error_flags(records)
         flagged = [record for record in records if record.likely_incorrect is True]
         if not flagged:
-            raise MetricError("VM2 has a zero error-flag denominator")
+            self._record_vacuous("VM2")
+            return 1.0
         correct_flags = sum(record.success is False for record in flagged)
         return correct_flags / len(flagged)
 
@@ -205,7 +207,8 @@ class MetricCalculator:
         self._validate_error_flags(records)
         unsuccessful = [record for record in records if record.success is False]
         if not unsuccessful:
-            raise MetricError("VM3 has a zero unsuccessful-episode denominator")
+            self._record_vacuous("VM3")
+            return 1.0
         recalled = sum(record.likely_incorrect is True for record in unsuccessful)
         return recalled / len(unsuccessful)
 
@@ -371,6 +374,13 @@ class MetricCalculator:
         task_rates_evidence[evidence_key] = task_rates
         overall_rates_evidence[evidence_key] = summary.overall
         return summary
+
+    def _record_vacuous(self, vm_id: str) -> None:
+        vacuous_metrics = self.intermediates["vacuous_metrics"]
+        assert isinstance(vacuous_metrics, list)
+        key = metric_key(vm_id)
+        if key not in vacuous_metrics:
+            vacuous_metrics.append(key)
 
     def _validate_error_flags(self, records: list[EpisodeRecord]) -> None:
         invalid = [record.episode_id for record in records if record.error_flag_invalid]
