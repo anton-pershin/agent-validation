@@ -17,7 +17,12 @@ from .errors import (
     SolutionProtocolError,
     SolutionTimeoutError,
 )
-from .process_tree import ProcessTreeTracker, terminate_process_tree
+from .process_tree import (
+    ProcessTreeTracker,
+    SupervisedStatus,
+    spawn_supervised,
+    terminate_process_tree,
+)
 
 
 class SolutionProcess:
@@ -51,9 +56,10 @@ class SolutionProcess:
         self._stderr_lock = threading.Lock()
         self._stderr_thread: threading.Thread | None = None
         self._tree_tracker: ProcessTreeTracker | None = None
+        self._status: SupervisedStatus | None = None
 
     def start(self) -> None:
-        self.process = subprocess.Popen(
+        self.process, self._status = spawn_supervised(
             self.command,
             cwd=self.cwd,
             env=self.environment,
@@ -61,7 +67,6 @@ class SolutionProcess:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             bufsize=0,
-            start_new_session=True,
         )
         self._tree_tracker = ProcessTreeTracker(self.process.pid)
         self._tree_tracker.start()
@@ -102,9 +107,9 @@ class SolutionProcess:
             try:
                 _, writable, _ = select.select([], [process.stdin], [], min(0.1, seconds_left))
                 if not writable:
-                    if process.poll() is not None:
+                    if self._solution_returncode() is not None:
                         raise SolutionExitedError(
-                            f"Solution exited with status {process.returncode}"
+                            f"Solution exited with status {self._solution_returncode()}"
                         )
                     continue
                 written = os.write(process.stdin.fileno(), remaining)
@@ -146,7 +151,8 @@ class SolutionProcess:
                         "Solution exited with an incomplete JSON Lines message"
                     )
                 raise SolutionExitedError(
-                    f"Solution exited with status {process.poll()} before a final response"
+                    f"Solution exited with status {self._solution_returncode()} "
+                    "before a final response"
                 )
             self._stdout_bytes += len(chunk)
             self._stdout_buffer.extend(chunk)
@@ -178,7 +184,14 @@ class SolutionProcess:
             except OSError:
                 pass
         tracked = self._tree_tracker.stop() if self._tree_tracker else set()
-        self.cleanup_error = terminate_process_tree(process, self.shutdown_seconds, tracked)
+        self.cleanup_error = terminate_process_tree(
+            process,
+            self.shutdown_seconds,
+            tracked,
+            root_completed=self._solution_returncode() is not None,
+        )
+        if self._status is not None:
+            self._status.close()
         if self._stderr_thread is not None:
             self._stderr_thread.join(timeout=self.shutdown_seconds)
             if self._stderr_thread.is_alive():
@@ -226,6 +239,9 @@ class SolutionProcess:
     def _check_stderr_limit(self) -> None:
         if self.output_limit_exceeded:
             raise SolutionOutputLimitError("Solution standard error exceeded its limit")
+
+    def _solution_returncode(self) -> int | None:
+        return self._status.poll() if self._status is not None else None
 
     def _require_process(self) -> subprocess.Popen[bytes]:
         if self.process is None:

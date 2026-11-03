@@ -296,6 +296,34 @@ def test_short_and_proxy_secrets_are_redacted_from_all_evidence(
         assert "s3" not in content, path
 
 
+def test_one_character_secret_does_not_corrupt_typed_evidence(
+    service_settings: ServiceSettings, git_solution, monkeypatch
+) -> None:
+    repo, first, _ = git_solution
+    monkeypatch.setenv("OPENAI_API_KEY", "p")
+    request = ValidationRequest(
+        repo=str(repo), commit=first, solution_overrides="--behavior log_secret"
+    )
+    ValidationApplication(service_settings).validate(request, ValidationScope.PARTIAL)
+    run_directory = run_directories(service_settings)[0]
+    records = records_for(run_directory)
+    assert len(records) == 6
+    assert {record.condition_type.value for record in records} == {
+        "unperturbed",
+        "prompt",
+        "failure",
+    }
+    assert all(record.answer == "<redacted>" for record in records)
+    planned = [
+        PlannedEpisode.model_validate(item)
+        for item in json.loads((run_directory / "planned_episodes.json").read_text())
+    ]
+    assert len(planned) == 6
+    configuration = json.loads((run_directory / "run.json").read_text())
+    assert configuration["validation_scope"] == "partial"
+    assert configuration["status"] == "completed"
+
+
 def test_overrides_are_not_executed_through_a_shell(
     service_settings: ServiceSettings, git_solution, tmp_path: Path
 ) -> None:

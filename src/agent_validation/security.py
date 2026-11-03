@@ -61,6 +61,32 @@ _CREDENTIAL_URL_ENV_NAMES = {
     "PIP_INDEX_URL",
     "PIP_EXTRA_INDEX_URL",
 }
+_STRUCTURAL_STRING_KEYS = {
+    "acceptance_status",
+    "action",
+    "call_id",
+    "computation_status",
+    "condition_id",
+    "condition_type",
+    "direction",
+    "episode_id",
+    "expected_value_or_threshold",
+    "failure_kind",
+    "fault_scenario_id",
+    "id",
+    "metric_id",
+    "name",
+    "profile",
+    "protocol_version",
+    "repeat",
+    "run_id",
+    "stage",
+    "status",
+    "task_id",
+    "termination_reason",
+    "type",
+    "validation_scope",
+}
 
 
 def validate_commit(commit: str) -> str:
@@ -98,14 +124,17 @@ def redact_text(value: str, secret_values: set[str] | None = None) -> str:
 
 def redact_data(value: Any, secret_values: set[str] | None = None) -> Any:
     if isinstance(value, dict):
-        return {
-            str(key): (
-                "<redacted>"
-                if _SENSITIVE_KEY_RE.search(str(key))
-                else redact_data(item, secret_values)
-            )
-            for key, item in value.items()
-        }
+        redacted = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if _SENSITIVE_KEY_RE.search(key_text):
+                redacted[key_text] = "<redacted>"
+            elif isinstance(item, str) and key_text in _STRUCTURAL_STRING_KEYS:
+                # Preserve enums and identifiers needed to parse and recompute evidence.
+                redacted[key_text] = redact_text(item)
+            else:
+                redacted[key_text] = redact_data(item, secret_values)
+        return redacted
     if isinstance(value, list):
         return [redact_data(item, secret_values) for item in value]
     if isinstance(value, tuple):

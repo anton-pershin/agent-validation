@@ -113,7 +113,7 @@ def test_provisioning_kills_escaped_child_when_parent_exits_first(
     command = (
         "import subprocess,sys,time; "
         f"subprocess.Popen([sys.executable,'-c',{child!r}], "
-        "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); time.sleep(0.2)"
+        "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)"
     )
     revision._run([sys.executable, "-c", command], "test parent exit", 5)
     revision.close()

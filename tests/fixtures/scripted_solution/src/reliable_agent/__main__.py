@@ -163,7 +163,6 @@ def main() -> None:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-        time.sleep(0.2)
         return
     if behavior == "malformed":
         print("not-json", flush=True)

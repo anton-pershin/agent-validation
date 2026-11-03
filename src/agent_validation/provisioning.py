@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .config import ResolvedProfile
 from .errors import ProvisioningError
-from .process_tree import ProcessTreeTracker, terminate_process_tree
+from .process_tree import ProcessTreeTracker, spawn_supervised, terminate_process_tree
 from .security import (
     parse_solution_overrides,
     provisioning_environment,
@@ -188,14 +188,13 @@ class RevisionPreparer:
         resources = self.resolved_profile.profile.resources
         capture = _BoundedCapture(resources.max_provisioning_output_bytes)
         try:
-            process = subprocess.Popen(
+            process, status = spawn_supervised(
                 command,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 bufsize=0,
                 env=provisioning_environment(),
-                start_new_session=True,
             )
         except OSError as exc:
             raise ProvisioningError(f"Cannot {stage}: {self._redact(str(exc))}") from exc
@@ -217,7 +216,8 @@ class RevisionPreparer:
             thread.start()
         deadline = time.monotonic() + timeout
         failure: ProvisioningError | None = None
-        while process.poll() is None:
+        returncode = status.poll()
+        while returncode is None:
             if capture.exceeded:
                 failure = ProvisioningError(f"Output limit exceeded while attempting to {stage}")
                 break
@@ -225,14 +225,14 @@ class RevisionPreparer:
                 failure = ProvisioningError(f"Timed out while attempting to {stage}")
                 break
             time.sleep(0.01)
-        if failure is None:
-            try:
-                process.wait(timeout=resources.process_shutdown_seconds)
-            except subprocess.TimeoutExpired:
-                failure = ProvisioningError(f"Cannot finish {stage}")
+            returncode = status.poll()
         cleanup_error = terminate_process_tree(
-            process, resources.process_shutdown_seconds, tracker.stop()
+            process,
+            resources.process_shutdown_seconds,
+            tracker.stop(),
+            root_completed=returncode is not None,
         )
+        status.close()
         if cleanup_error:
             message = f"Cannot clean up {stage}: {cleanup_error}"
             failure = (
@@ -247,17 +247,17 @@ class RevisionPreparer:
         stdout, stderr = capture.outputs()
         event = {
             "stage": stage,
-            "return_code": process.poll(),
+            "return_code": returncode,
             "stdout": self._redact(stdout[-8192:]),
             "stderr": self._redact(stderr[-8192:]),
         }
         self.events.append(event)
         if failure is not None:
             raise failure
-        if process.returncode != 0:
+        if returncode != 0:
             details = stderr[-8192:] or stdout[-8192:]
             raise ProvisioningError(
-                f"Failed to {stage} (exit {process.returncode}): {self._redact(details)}"
+                f"Failed to {stage} (exit {returncode}): {self._redact(details)}"
             )
         return stdout
 

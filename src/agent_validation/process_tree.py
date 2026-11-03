@@ -4,11 +4,73 @@ from __future__ import annotations
 
 import os
 import signal
+import struct
 import subprocess
+import sys
 import threading
 import time
 from collections import defaultdict
 from pathlib import Path
+
+
+class SupervisedStatus:
+    """Nonblocking direct-child status reported by the subreaper."""
+
+    def __init__(self, descriptor: int) -> None:
+        self.descriptor = descriptor
+        self._buffer = bytearray()
+        self.returncode: int | None = None
+
+    def poll(self) -> int | None:
+        if self.returncode is not None:
+            return self.returncode
+        try:
+            chunk = os.read(self.descriptor, 4 - len(self._buffer))
+        except BlockingIOError:
+            return None
+        except OSError:
+            return None
+        if chunk:
+            self._buffer.extend(chunk)
+        if len(self._buffer) == 4:
+            self.returncode = struct.unpack("i", self._buffer)[0]
+            self.close()
+        return self.returncode
+
+    def close(self) -> None:
+        if self.descriptor >= 0:
+            try:
+                os.close(self.descriptor)
+            except OSError:
+                pass
+            self.descriptor = -1
+
+
+def spawn_supervised(
+    command: list[str], **popen_arguments
+) -> tuple[subprocess.Popen[bytes], SupervisedStatus]:
+    """Start a command under a subreaper and return its root and status channel."""
+    status_read, status_write = os.pipe()
+    os.set_blocking(status_read, False)
+    environment = dict(popen_arguments.pop("env", None) or os.environ)
+    environment["AGENT_VALIDATION_STATUS_FD"] = str(status_write)
+    pass_fds = tuple(popen_arguments.pop("pass_fds", ())) + (status_write,)
+    popen_arguments.pop("start_new_session", None)
+    supervisor_command = [sys.executable, "-m", "agent_validation.supervisor", *command]
+    try:
+        process = subprocess.Popen(
+            supervisor_command,
+            **popen_arguments,
+            env=environment,
+            pass_fds=pass_fds,
+            start_new_session=True,
+        )
+    except Exception:
+        os.close(status_read)
+        os.close(status_write)
+        raise
+    os.close(status_write)
+    return process, SupervisedStatus(status_read)
 
 
 class ProcessTreeTracker:
@@ -80,16 +142,19 @@ def terminate_process_tree(
     process: subprocess.Popen,
     shutdown_seconds: float,
     tracked_pids: set[int] | None = None,
+    *,
+    root_completed: bool = False,
 ) -> str | None:
     """Kill and verify the root, its group, and every tracked descendant."""
     descendants = (tracked_pids or set()) | descendant_pids(process.pid)
     _signal_group(process.pid, signal.SIGTERM)
     _signal_pids(descendants, signal.SIGTERM)
-    root_timed_out = False
-    try:
-        process.wait(timeout=shutdown_seconds)
-    except subprocess.TimeoutExpired:
-        root_timed_out = True
+    root_timed_out = root_completed
+    if not root_completed:
+        try:
+            process.wait(timeout=shutdown_seconds)
+        except subprocess.TimeoutExpired:
+            root_timed_out = True
 
     # Descendants get no free pass when the root exits first or ignores SIGTERM.
     remaining = _living_pids(descendants)
