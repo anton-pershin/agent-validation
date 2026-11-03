@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 from agent_validation.application import ServiceSettings, ValidationApplication
-from agent_validation.config import load_profile
+from agent_validation.config import ValidationProfile, load_profile
 from agent_validation.contracts import (
     EpisodeRecord,
     PlannedEpisode,
@@ -322,6 +322,7 @@ def test_one_character_secret_does_not_corrupt_typed_evidence(
     configuration = json.loads((run_directory / "run.json").read_text())
     assert configuration["validation_scope"] == "partial"
     assert configuration["status"] == "completed"
+    ValidationProfile.model_validate(configuration["profile"])
 
 
 def test_overrides_are_not_executed_through_a_shell(

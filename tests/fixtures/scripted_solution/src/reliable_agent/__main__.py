@@ -256,6 +256,20 @@ def main() -> None:
         print(provider_secret, file=sys.stderr)
         print(proxy_secret, file=sys.stderr)
         print(f"api-key={args.api_key}", file=sys.stderr)
+        send(
+            {
+                "protocol_version": 1,
+                "type": "actions",
+                "call_id": provider_secret,
+                "actions": [
+                    {
+                        "name": "get_action_catalog",
+                        "arguments": {"required": [provider_secret]},
+                    }
+                ],
+            }
+        )
+        receive()
     if behavior == "amplification":
         send(
             {

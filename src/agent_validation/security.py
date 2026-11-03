@@ -64,7 +64,7 @@ _CREDENTIAL_URL_ENV_NAMES = {
 _STRUCTURAL_STRING_KEYS = {
     "acceptance_status",
     "action",
-    "call_id",
+    "action_name",
     "computation_status",
     "condition_id",
     "condition_type",
@@ -80,12 +80,54 @@ _STRUCTURAL_STRING_KEYS = {
     "protocol_version",
     "repeat",
     "run_id",
+    "solution_module",
     "stage",
     "status",
     "task_id",
     "termination_reason",
     "type",
     "validation_scope",
+}
+_STRUCTURAL_LIST_KEYS = {
+    "acceptance_criteria",
+    "environment_variables_forwarded",
+    "failure_scenario_ids",
+    "passthrough",
+    "prompt_variant_ids",
+    "required",
+    "task_ids",
+}
+_ENUM_KEY_VALUES = {
+    "action": {"get_action_catalog", "pick_up", "put_down", "stack", "unstack"},
+    "condition_type": {"unperturbed", "prompt", "failure"},
+    "direction": {"service_to_solution", "solution_to_service"},
+    "failure_kind": {"none", "solution", "infrastructure"},
+    "name": {"get_action_catalog", "pick_up", "put_down", "stack", "unstack"},
+    "status": {
+        "accepted",
+        "valid",
+        "invalid",
+        "running",
+        "completed",
+        "failed",
+        "ok",
+        "error",
+        "rejected",
+        "computed",
+        "failed_to_compute",
+    },
+    "type": {
+        "task",
+        "actions",
+        "observation",
+        "final",
+        "malformed_action",
+        "unknown_action",
+        "precondition_failed",
+        "transient_failure",
+        "action_budget_exceeded",
+    },
+    "validation_scope": {"full", "partial"},
 }
 
 
@@ -122,26 +164,52 @@ def redact_text(value: str, secret_values: set[str] | None = None) -> str:
     return value
 
 
-def redact_data(value: Any, secret_values: set[str] | None = None) -> Any:
+def redact_data(
+    value: Any,
+    secret_values: set[str] | None = None,
+    *,
+    _parent_key: str | None = None,
+    trusted_structure: bool = True,
+) -> Any:
     if isinstance(value, dict):
         redacted = {}
         for key, item in value.items():
             key_text = str(key)
             if _SENSITIVE_KEY_RE.search(key_text):
                 redacted[key_text] = "<redacted>"
-            elif isinstance(item, str) and key_text in _STRUCTURAL_STRING_KEYS:
-                # Preserve enums and identifiers needed to parse and recompute evidence.
+            elif isinstance(item, str) and _protect_string(key_text, item, trusted_structure):
                 redacted[key_text] = redact_text(item)
             else:
-                redacted[key_text] = redact_data(item, secret_values)
+                redacted[key_text] = redact_data(
+                    item,
+                    secret_values,
+                    _parent_key=key_text,
+                    trusted_structure=trusted_structure,
+                )
         return redacted
-    if isinstance(value, list):
-        return [redact_data(item, secret_values) for item in value]
-    if isinstance(value, tuple):
-        return [redact_data(item, secret_values) for item in value]
+    if isinstance(value, (list, tuple)):
+        return [
+            redact_data(
+                item,
+                secret_values,
+                _parent_key=_parent_key,
+                trusted_structure=trusted_structure,
+            )
+            for item in value
+        ]
     if isinstance(value, str):
+        if _parent_key in _STRUCTURAL_LIST_KEYS and trusted_structure:
+            return redact_text(value)
+        if _parent_key == "required" and value in {"block", "other_block"}:
+            return redact_text(value)
         return redact_text(value, secret_values)
     return value
+
+
+def _protect_string(key: str, value: str, trusted_structure: bool) -> bool:
+    if value in _ENUM_KEY_VALUES.get(key, set()):
+        return True
+    return trusted_structure and key in _STRUCTURAL_STRING_KEYS
 
 
 def collect_secret_values(request: ValidationRequest, profile: ValidationProfile) -> set[str]:

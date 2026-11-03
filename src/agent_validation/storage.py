@@ -61,7 +61,7 @@ class RunStore:
     def write_protocol(self, episode_id: str, messages: list[dict[str, Any]]) -> None:
         lines = [
             json.dumps(
-                redact_data(message, self.secret_values),
+                redact_data(message, self.secret_values, trusted_structure=False),
                 ensure_ascii=False,
                 sort_keys=True,
             )
