@@ -116,3 +116,33 @@ The service checks the final world state independently. Reaching a goal does not
 ## Environment and limits
 
 The profile lists provider environment variables that the solution can receive. Other caller variables are not forwarded, except required system and certificate variables. Model waits, tool waits, retries, and self-assessment count toward the episode time limit. Dependency installation and setup before task delivery do not count.
+
+## Validation result
+
+The validation result contains the profile, scope, and one entry for each acceptance criterion. Metric keys combine stable VM identifiers with informative names:
+
+```json
+{
+  "profile": "default",
+  "validation_scope": "full",
+  "AC1": {
+    "status": "accepted",
+    "metrics_status": {
+      "VM1/unperturbed_overall_success_rate": {
+        "computation_status": "computed",
+        "acceptance_status": "accepted",
+        "computed_value": 1.0,
+        "expected_value_or_threshold": ">= 0.95",
+        "error_message": null
+      }
+    }
+  }
+}
+```
+
+Other single-instance keys include `VM2/error_flag_precision`, `VM3/error_flag_recall`, and `VM10/timely_final_response_rate`. Multiple-instance keys preserve the variant or scenario identifier after the descriptive name, for example:
+
+- `VM5/prompt_variant_overall_success_rate_loss/concise`
+- `VM7/transient_failure_overall_success_rate_loss/pick_up_failure`
+
+Bare VM keys are not used in the result. A computed metric has `acceptance_status` of `accepted` or `rejected`. A metric that cannot be computed has `computation_status` of `failed_to_compute`, a null `computed_value`, and an explanation in `error_message`.
