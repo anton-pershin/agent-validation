@@ -1,0 +1,82 @@
+name: default
+solution_module: reliable_agent
+random_seed: 0
+original_instructions: >-
+  Solve the Blocks World task in the supplied PDDL problem. Use the available
+  actions and observations. Declare completion only after the goal is satisfied.
+  Return a concise answer, confidence, likely_incorrect, and a short reason.
+tasks:
+  - id: stack_ab
+    problem: ../blocks_world/problems/stack_ab.pddl
+  - id: unstack_ab
+    problem: ../blocks_world/problems/unstack_ab.pddl
+  - id: restack_abc
+    problem: ../blocks_world/problems/restack_abc.pddl
+  - id: stack_three
+    problem: ../blocks_world/problems/stack_three.pddl
+  - id: move_c
+    problem: ../blocks_world/problems/move_c.pddl
+prompt_variants:
+  - id: concise
+    instructions: >-
+      Complete the supplied Blocks World PDDL task. Act from observations,
+      check the goal, and then send the required self-assessed final response.
+  - id: formal
+    instructions: >-
+      Your objective is to reach every goal predicate in the provided PDDL
+      problem. Use environment feedback to select actions. When finished,
+      explicitly declare completion and assess whether your answer may be wrong.
+failure_scenarios:
+  - id: pick_up_failure
+    action_name: pick_up
+    occurrence: 1
+    error_message: Temporary gripper failure. The world state did not change.
+    task_ids: [stack_ab, restack_abc, stack_three, move_c]
+  - id: unstack_failure
+    action_name: unstack
+    occurrence: 1
+    error_message: Temporary gripper failure. The world state did not change.
+    task_ids: [unstack_ab, restack_abc]
+full:
+  task_ids: [stack_ab, unstack_ab, restack_abc, stack_three, move_c]
+  repeats: 2
+  prompt_variant_ids: [concise, formal]
+  failure_scenario_ids: [pick_up_failure, unstack_failure]
+partial:
+  task_ids: [stack_ab]
+  repeats: 2
+  prompt_variant_ids: [concise]
+  failure_scenario_ids: [pick_up_failure]
+acceptance_criteria: [AC1, AC2, AC3, AC4, AC5, AC6, AC7]
+criteria:
+  AC1:
+    min_success_rate: 0.95
+  AC2:
+    min_precision: 0.80
+    min_recall: 0.50
+  AC3:
+    max_range: 0.05
+  AC4:
+    max_loss: 0.05
+    max_range: 0.05
+  AC5:
+    max_loss: 0.05
+    max_range: 0.05
+  AC6:
+    max_action_attempts: 50
+  AC7:
+    min_timely_response_rate: 0.95
+    time_limit_seconds: 300
+resources:
+  episode_concurrency: 1
+  max_output_bytes: 1000000
+  max_retained_log_bytes: 65536
+  max_provisioning_output_bytes: 1000000
+  install_timeout_seconds: 300
+  git_timeout_seconds: 120
+  process_shutdown_seconds: 2
+environment:
+  passthrough:
+    - OPENAI_API_KEY
+    - OPENAI_BASE_URL
+    - ANTHROPIC_API_KEY
