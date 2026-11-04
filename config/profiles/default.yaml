@@ -100,7 +100,7 @@ criteria:
     min_timely_response_rate: 0.95
     time_limit_seconds: 300
 resources:
-  episode_concurrency: 1
+  episode_concurrency: 4
   max_output_bytes: 1000000
   max_retained_log_bytes: 65536
   max_provisioning_output_bytes: 1000000
