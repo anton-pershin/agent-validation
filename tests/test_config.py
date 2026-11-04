@@ -16,14 +16,16 @@ def test_default_profile_populations() -> None:
     profile = load_profile("default", profile_dir)
     full = profile.plan_episodes(ValidationScope.FULL)
     partial = profile.plan_episodes(ValidationScope.PARTIAL)
-    assert len(full) == 42
-    assert len(partial) == 6
-    assert len({episode.episode_id for episode in full}) == 42
-    assert {episode.repeat for episode in partial} == {1, 2}
+    assert len(full) == 890
+    assert len(partial) == 42
+    assert len({episode.episode_id for episode in full}) == 890
+    assert {episode.repeat for episode in full} == set(range(1, 11))
     assert {episode.condition_id for episode in partial} == {
         "unperturbed",
         "prompt/concise",
+        "prompt/formal",
         "failure/pick_up_failure",
+        "failure/unstack_failure",
     }
 
 

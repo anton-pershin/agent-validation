@@ -79,7 +79,10 @@ class MetricCalculator:
                         )
                     )
                 for scenario in self.profile.selected_scenarios(self.scope):
-                    if task_id in scenario.task_ids:
+                    eligible_task_ids = self.scope.failure_task_ids.get(
+                        scenario.id, scenario.task_ids
+                    )
+                    if task_id in eligible_task_ids:
                         expected.add(
                             (
                                 task_id,
@@ -242,7 +245,9 @@ class MetricCalculator:
         scenario_config = next(
             item for item in self.profile.selected_scenarios(self.scope) if item.id == scenario_id
         )
-        task_ids = set(self.scope.task_ids) & set(scenario_config.task_ids)
+        task_ids = set(self.scope.task_ids) & set(
+            self.scope.failure_task_ids.get(scenario_config.id, scenario_config.task_ids)
+        )
         if not task_ids:
             raise MetricError(f"Scenario {scenario_id} has no eligible tasks in scope")
         condition_id = f"failure/{scenario_id}"
@@ -261,7 +266,7 @@ class MetricCalculator:
             raise MetricError("VM8 requires at least one transient-failure scenario")
         task_ids = set(self.scope.task_ids)
         for scenario in scenarios:
-            task_ids &= set(scenario.task_ids)
+            task_ids &= set(self.scope.failure_task_ids.get(scenario.id, scenario.task_ids))
         if not task_ids:
             raise MetricError("VM8 requires a nonempty common scenario task set")
         rates = [

@@ -1,0 +1,6 @@
+(define (problem unstack-ba)
+  (:domain blocks-world)
+  (:objects a b c - block)
+  (:init (on b a) (on-table c) (clear b) (clear c) (hand-empty))
+  (:goal (and (on-table b)))
+)
