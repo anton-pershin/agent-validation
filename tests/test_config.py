@@ -16,9 +16,9 @@ def test_default_profile_populations() -> None:
     profile = load_profile("default", profile_dir)
     full = profile.plan_episodes(ValidationScope.FULL)
     partial = profile.plan_episodes(ValidationScope.PARTIAL)
-    assert len(full) == 890
+    assert len(full) == 840
     assert len(partial) == 42
-    assert len({episode.episode_id for episode in full}) == 890
+    assert len({episode.episode_id for episode in full}) == 840
     assert {episode.repeat for episode in full} == set(range(1, 11))
     assert {episode.condition_id for episode in partial} == {
         "unperturbed",

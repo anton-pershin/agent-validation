@@ -114,16 +114,27 @@ def test_full_and_partial_population_counts() -> None:
     resolved = load_profile("default", PROFILE_DIR)
     full = resolved.plan_episodes(ValidationScope.FULL)
     partial = resolved.plan_episodes(ValidationScope.PARTIAL)
-    assert len(full) == 890
+    assert len(full) == 840
     assert len(partial) == 42
     assert Counter(episode.condition_id for episode in full) == {
         "unperturbed": 200,
         "prompt/concise": 200,
         "prompt/formal": 200,
-        "failure/pick_up_failure": 200,
+        "failure/pick_up_failure": 150,
         "failure/unstack_failure": 90,
     }
     assert {episode.repeat for episode in full} == set(range(1, 11))
+
+
+def test_pick_up_failure_uses_tasks_that_require_pick_up() -> None:
+    resolved = load_profile("default", PROFILE_DIR)
+    scenarios = {scenario.id: scenario for scenario in resolved.profile.failure_scenarios}
+    unstack_only = {"unstack_ab", "unstack_ba", "unstack_bc", "unstack_ca", "unstack_tower"}
+    assert len(scenarios["pick_up_failure"].task_ids) == 15
+    assert not unstack_only & set(scenarios["pick_up_failure"].task_ids)
+    assert set(scenarios["pick_up_failure"].task_ids) & set(
+        scenarios["unstack_failure"].task_ids
+    ) == {"restack_abc", "restack_bca", "restack_cab", "restack_bac"}
 
 
 def test_task_identity_solvability_and_fault_coverage() -> None:

@@ -71,7 +71,7 @@ The process communicates through versioned JSON Lines on standard input and outp
 
 ## Profiles and environment
 
-Profiles are YAML files in `config/profiles`. A profile defines task files, conditions, repeats, thresholds, time and action limits, resource limits, and environment variables forwarded to the solution. Problem paths are relative to the profile file. The `default` full profile has 20 distinct tasks and 10 repeats per condition, producing 890 episodes. The partial profile has the former five-task, two-repeat population with 42 episodes. `pick_up_failure` is eligible for all 20 full tasks and retains its original four tasks in partial validation. `unstack_failure` is eligible for nine stacked tasks.
+Profiles are YAML files in `config/profiles`. A profile defines task files, conditions, repeats, thresholds, time and action limits, resource limits, and environment variables forwarded to the solution. Problem paths are relative to the profile file. The `default` full profile has 20 distinct tasks and 10 repeats per condition, producing 840 episodes. The partial profile has the former five-task, two-repeat population with 42 episodes. `pick_up_failure` is eligible for 15 full tasks that require pick-up and retains its original four tasks in partial validation. `unstack_failure` is eligible for nine stacked tasks.
 
 Configuration environment variables:
 
@@ -93,7 +93,7 @@ Each validation has a unique evidence directory containing:
 - `planned_episodes.json` and `episodes.jsonl`: the complete population and observations;
 - `provisioning.json`: bounded provisioning logs and the resolved solution dependency manifest in `run.json`;
 - `episodes/<id>/`: protocol messages, solution logs, and the episode record;
-- `metrics.json` and `intermediates.json`: values and calculation evidence;
+- `metrics.json` and `intermediates.json`: values and calculation evidence, including overall and per-task fault-exposure and exposed-recovery rates for each transient-failure scenario;
 - `result.json`: the common validation result.
 
 The evidence directory remains after success or failure. Temporary checkouts, virtual environments, and workspaces are removed. Each episode has a separate HOME, workspace, and virtual-environment runtime copy. Changes to one episode's installed files cannot affect another episode. Linux child-subreaper supervisors contain solution and provisioning process trees, including children that create new sessions or become orphaned. Process groups and tracked descendants are terminated after each episode.
