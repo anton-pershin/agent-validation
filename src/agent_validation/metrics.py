@@ -231,7 +231,7 @@ class MetricCalculator:
     def _vm5(self, variant_id: str) -> float:
         baseline = self._overall_rate("unperturbed", "unperturbed").overall
         variant = self._overall_rate(f"prompt/{variant_id}", f"prompt/{variant_id}").overall
-        return max(0.0, baseline - variant)
+        return baseline - variant
 
     def _vm6(self) -> float:
         variants = self.profile.selected_variants(self.scope)

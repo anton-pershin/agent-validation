@@ -1,6 +1,6 @@
 # Agent validation service
 
-This service evaluates an exact solution commit against a validation profile. The `default` profile evaluates `reliable-agent` with PDDL Blocks World tasks, repeated runs, prompt variants, and transient action failures. It computes VM1–VM10 and evaluates AC1–AC7. Metric keys combine stable VM identifiers with informative names, such as `VM1/unperturbed_overall_success_rate` and `VM5/prompt_variant_overall_success_rate_loss/concise`. VM2 and VM3 are computed as `1.0` when their denominators are zero; retained evidence lists these instances in `vacuous_metrics`.
+This service evaluates an exact solution commit against a validation profile. The `default` profile evaluates `reliable-agent` with PDDL Blocks World tasks, repeated runs, prompt variants, and transient action failures. It computes VM1–VM10 and evaluates AC1–AC7. Metric keys combine stable VM identifiers with informative names, such as `VM1/unperturbed_overall_success_rate` and `VM5/prompt_variant_overall_success_rate_loss/concise`. VM5 is the signed unperturbed-minus-variant success-rate difference: positive values are losses and negative values are gains. VM2 and VM3 are computed as `1.0` when their denominators are zero; retained evidence lists these instances in `vacuous_metrics`.
 
 ## Requirements
 
