@@ -42,6 +42,7 @@ class ScopeConfig(ProfileModel):
     repeats: int = Field(ge=1)
     prompt_variant_ids: list[str] = Field(default_factory=list)
     failure_scenario_ids: list[str] = Field(default_factory=list)
+    failure_task_ids: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class AC1Config(ProfileModel):
@@ -134,6 +135,18 @@ class ValidationProfile(ProfileModel):
             _require_references(scope.task_ids, task_ids, f"{scope_name} scope")
             _require_references(scope.prompt_variant_ids, variant_ids, f"{scope_name} scope")
             _require_references(scope.failure_scenario_ids, scenario_ids, f"{scope_name} scope")
+            for scenario_id, scenario_task_ids in scope.failure_task_ids.items():
+                if scenario_id not in scope.failure_scenario_ids:
+                    raise ValueError(f"Failure task override for unselected scenario {scenario_id}")
+                _unique_ids(
+                    scenario_task_ids,
+                    f"task override for scenario {scenario_id} in {scope_name} scope",
+                )
+                _require_references(
+                    scenario_task_ids,
+                    set(scope.task_ids),
+                    f"scenario {scenario_id} in {scope_name} scope",
+                )
         allowed_criteria = {f"AC{index}" for index in range(1, 8)}
         unknown = set(self.acceptance_criteria) - allowed_criteria
         if unknown:
@@ -203,7 +216,8 @@ class ResolvedProfile(BaseModel):
                         )
                     )
                 for scenario in scenarios:
-                    if task_id not in scenario.task_ids:
+                    eligible_task_ids = scope.failure_task_ids.get(scenario.id, scenario.task_ids)
+                    if task_id not in eligible_task_ids:
                         continue
                     planned.append(
                         PlannedEpisode(

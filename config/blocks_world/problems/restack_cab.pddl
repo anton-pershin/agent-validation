@@ -1,0 +1,6 @@
+(define (problem restack-cab)
+  (:domain blocks-world)
+  (:objects a b c - block)
+  (:init (on c a) (on-table a) (on-table b) (clear c) (clear b) (hand-empty))
+  (:goal (and (on-table c) (on a b)))
+)

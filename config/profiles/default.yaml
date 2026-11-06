@@ -16,6 +16,36 @@ tasks:
     problem: ../blocks_world/problems/stack_three.pddl
   - id: move_c
     problem: ../blocks_world/problems/move_c.pddl
+  - id: stack_bc
+    problem: ../blocks_world/problems/stack_bc.pddl
+  - id: stack_ca
+    problem: ../blocks_world/problems/stack_ca.pddl
+  - id: stack_ba
+    problem: ../blocks_world/problems/stack_ba.pddl
+  - id: stack_cb
+    problem: ../blocks_world/problems/stack_cb.pddl
+  - id: stack_ac
+    problem: ../blocks_world/problems/stack_ac.pddl
+  - id: stack_ba_on_c
+    problem: ../blocks_world/problems/stack_ba_on_c.pddl
+  - id: stack_ca_on_b
+    problem: ../blocks_world/problems/stack_ca_on_b.pddl
+  - id: unstack_ba
+    problem: ../blocks_world/problems/unstack_ba.pddl
+  - id: unstack_ca
+    problem: ../blocks_world/problems/unstack_ca.pddl
+  - id: unstack_bc
+    problem: ../blocks_world/problems/unstack_bc.pddl
+  - id: restack_bca
+    problem: ../blocks_world/problems/restack_bca.pddl
+  - id: restack_cab
+    problem: ../blocks_world/problems/restack_cab.pddl
+  - id: restack_bac
+    problem: ../blocks_world/problems/restack_bac.pddl
+  - id: tower_four
+    problem: ../blocks_world/problems/tower_four.pddl
+  - id: unstack_tower
+    problem: ../blocks_world/problems/unstack_tower.pddl
 prompt_variants:
   - id: concise
     instructions: >-
@@ -31,22 +61,24 @@ failure_scenarios:
     action_name: pick_up
     occurrence: 1
     error_message: Temporary gripper failure. The world state did not change.
-    task_ids: [stack_ab, restack_abc, stack_three, move_c]
+    task_ids: [stack_ab, unstack_ab, restack_abc, stack_three, move_c, stack_bc, stack_ca, stack_ba, stack_cb, stack_ac, stack_ba_on_c, stack_ca_on_b, unstack_ba, unstack_ca, unstack_bc, restack_bca, restack_cab, restack_bac, tower_four, unstack_tower]
   - id: unstack_failure
     action_name: unstack
     occurrence: 1
     error_message: Temporary gripper failure. The world state did not change.
-    task_ids: [unstack_ab, restack_abc]
+    task_ids: [unstack_ab, restack_abc, unstack_ba, unstack_ca, unstack_bc, restack_bca, restack_cab, restack_bac, unstack_tower]
 full:
+  task_ids: [stack_ab, unstack_ab, restack_abc, stack_three, move_c, stack_bc, stack_ca, stack_ba, stack_cb, stack_ac, stack_ba_on_c, stack_ca_on_b, unstack_ba, unstack_ca, unstack_bc, restack_bca, restack_cab, restack_bac, tower_four, unstack_tower]
+  repeats: 10
+  prompt_variant_ids: [concise, formal]
+  failure_scenario_ids: [pick_up_failure, unstack_failure]
+partial:
   task_ids: [stack_ab, unstack_ab, restack_abc, stack_three, move_c]
   repeats: 2
   prompt_variant_ids: [concise, formal]
   failure_scenario_ids: [pick_up_failure, unstack_failure]
-partial:
-  task_ids: [stack_ab]
-  repeats: 2
-  prompt_variant_ids: [concise]
-  failure_scenario_ids: [pick_up_failure]
+  failure_task_ids:
+    pick_up_failure: [stack_ab, restack_abc, stack_three, move_c]
 acceptance_criteria: [AC1, AC2, AC3, AC4, AC5, AC6, AC7]
 criteria:
   AC1:
@@ -68,7 +100,7 @@ criteria:
     min_timely_response_rate: 0.95
     time_limit_seconds: 300
 resources:
-  episode_concurrency: 1
+  episode_concurrency: 4
   max_output_bytes: 1000000
   max_retained_log_bytes: 65536
   max_provisioning_output_bytes: 1000000

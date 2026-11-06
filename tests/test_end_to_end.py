@@ -366,7 +366,7 @@ def test_catalog_batches_and_actions_after_goal(
     assert result["AC6"]["status"] == "accepted"
 
 
-def test_complete_default_full_population(git_solution, tmp_path: Path) -> None:
+def test_default_partial_population(git_solution, tmp_path: Path) -> None:
     repo, first, _ = git_solution
     settings = ServiceSettings(
         profile_dir=Path(__file__).resolve().parents[1] / "config" / "profiles",
@@ -377,21 +377,11 @@ def test_complete_default_full_population(git_solution, tmp_path: Path) -> None:
     result = run_validation(settings, repo, first)
     records = records_for(run_directories(settings)[0])
     assert result["validation_scope"] == "partial"
-    assert len(records) == 6
-    full_result = ValidationApplication(settings).validate(
-        ValidationRequest(repo=str(repo), commit=first, solution_overrides="--behavior success"),
-        ValidationScope.FULL,
-    )
-    full_run = run_directories(settings)[1]
-    full_records = records_for(full_run)
-    assert full_result["validation_scope"] == "full"
-    assert len(full_records) == 42
-    assert all(record.success is True for record in full_records)
-    assert full_result["AC1"]["status"] == "accepted"
-    assert full_result["AC2"]["status"] == "accepted"
-    for criterion in ("AC3", "AC4", "AC5", "AC6", "AC7"):
-        assert full_result[criterion]["status"] == "accepted", criterion
-    assert {record.condition_id for record in full_records} == {
+    assert len(records) == 42
+    assert all(record.success is True for record in records)
+    for criterion in ("AC1", "AC2", "AC3", "AC4", "AC5", "AC6", "AC7"):
+        assert result[criterion]["status"] == "accepted", criterion
+    assert {record.condition_id for record in records} == {
         "unperturbed",
         "prompt/concise",
         "prompt/formal",
