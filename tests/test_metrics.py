@@ -154,7 +154,7 @@ def test_all_metrics_match_independent_values_and_all_criteria_accept(tmp_path: 
         "VM3/error_flag_recall": 5 / 7,
         "VM4/repeated_run_overall_success_rate_range": 0.5,
         "VM5/prompt_variant_overall_success_rate_loss/v1": 0.5,
-        "VM5/prompt_variant_overall_success_rate_loss/v2": 0.0,
+        "VM5/prompt_variant_overall_success_rate_loss/v2": -0.25,
         "VM6/prompt_variant_overall_success_rate_range": 0.75,
         "VM7/transient_failure_overall_success_rate_loss/f1": 0.0,
         "VM7/transient_failure_overall_success_rate_loss/f2": 0.25,
@@ -174,6 +174,17 @@ def test_all_metrics_match_independent_values_and_all_criteria_accept(tmp_path: 
         "t1": 1.0,
         "t2": 0.5,
     }
+
+
+def test_vm5_reports_variant_gain_as_negative_loss_and_accepts_it(tmp_path: Path) -> None:
+    resolved, planned, records = metric_population(tmp_path)
+    computations = MetricCalculator(resolved, ValidationScope.FULL, planned, records).compute()
+    metric_id = "VM5/prompt_variant_overall_success_rate_loss/v2"
+    assert computations[metric_id].computed_value == pytest.approx(-0.25)
+    result = CriterionEvaluator(resolved, ValidationScope.FULL, computations).evaluate()
+    metric = result.criteria["AC4"].metrics_status[metric_id]
+    assert metric.computed_value == pytest.approx(-0.25)
+    assert metric.acceptance_status == "accepted"
 
 
 def test_rejected_metric_makes_valid_and_failed_metric_makes_invalid(tmp_path: Path) -> None:
