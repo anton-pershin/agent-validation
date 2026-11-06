@@ -44,6 +44,25 @@ def records_for(run_directory: Path) -> list[EpisodeRecord]:
     ]
 
 
+def test_repeat_placeholder_reaches_each_episode_solution(
+    service_settings: ServiceSettings, git_solution
+) -> None:
+    repo, first, _ = git_solution
+    request = ValidationRequest(
+        repo=str(repo),
+        commit=first,
+        solution_overrides="--behavior echo_seed --seed {repeat}",
+    )
+    ValidationApplication(service_settings).validate(request, ValidationScope.PARTIAL)
+    run_directory = run_directories(service_settings)[0]
+    records = records_for(run_directory)
+    assert len(records) == 6
+    assert {record.answer for record in records} == {"1", "2"}
+    assert all(record.answer == str(record.repeat) for record in records)
+    configuration = json.loads((run_directory / "run.json").read_text())
+    assert configuration["solution_overrides"] == "--behavior echo_seed --seed {repeat}"
+
+
 def test_exact_commit_evidence_recomputation_and_cleanup(
     service_settings: ServiceSettings, git_solution
 ) -> None:

@@ -120,12 +120,26 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--behavior", default="success")
     parser.add_argument("--api-key", default=None)
+    parser.add_argument("--seed", default="unset")
     args = parser.parse_args()
     behavior = args.behavior
     if behavior == "non_reading":
         time.sleep(60)
     task_message = receive()
     task = task_message["task"]
+    if behavior == "echo_seed":
+        send(
+            {
+                "protocol_version": 1,
+                "type": "final",
+                "completed": False,
+                "answer": args.seed,
+                "confidence": 0.99,
+                "likely_incorrect": True,
+                "reason": "scripted seed echo",
+            }
+        )
+        return
     if behavior == "partial_line":
         sys.stdout.write('{"protocol_version": 1, "type": "final"')
         sys.stdout.flush()

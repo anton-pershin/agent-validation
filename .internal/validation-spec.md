@@ -104,7 +104,7 @@ CLI inputs:
 - `repo`: clonable solution repository URL.
 - `commit`: exact commit to evaluate.
 - `output_json`: path where the JSON result is written.
-- `solution_overrides`: optional space-separated solution arguments; defaults to an empty string.
+- `solution_overrides`: optional space-separated solution arguments; defaults to an empty string. After parsing, replace each `{repeat}` substring with the planned episode's one-based repeat number. Pass the resulting arguments directly without shell execution.
 - `profile`: optional profile name; defaults to `default`.
 
 `validation_cli.py` requests full validation. `validation_cli_partial.py` takes the same inputs and requests the profile's diagnostic subset. Both return a process exit status and write the result JSON to `output_json`.
