@@ -14,6 +14,34 @@ from agent_validation.errors import ProvisioningError
 from agent_validation.provisioning import RevisionPreparer
 
 
+def test_solution_command_expands_repeat_in_override_arguments(
+    service_settings: ServiceSettings, tmp_path: Path
+) -> None:
+    resolved = load_profile("test", service_settings.profile_dir)
+    revision = RevisionPreparer(
+        "/unused",
+        "a" * 40,
+        "--seed {repeat} --label=repeat-{repeat} --temperature 0.7",
+        resolved,
+        tmp_path / "temporary",
+    )
+    (revision.virtual_environment / "bin").mkdir(parents=True)
+    try:
+        for repeat in (1, 2, 10):
+            command = revision.solution_command("episode", repeat)
+            assert command[1:] == [
+                "-m",
+                "reliable_agent",
+                "--seed",
+                str(repeat),
+                f"--label=repeat-{repeat}",
+                "--temperature",
+                "0.7",
+            ]
+    finally:
+        revision.close()
+
+
 def test_failed_clone_preserves_failure_evidence_and_cleans_temporary_root(
     service_settings: ServiceSettings, tmp_path: Path
 ) -> None:

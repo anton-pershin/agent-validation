@@ -61,7 +61,7 @@ class EpisodeExecutor:
             workspace = self.revision.episode_workspace(planned.episode_id)
             resources = self.profile.resources
             process = SolutionProcess(
-                self.revision.solution_command(planned.episode_id),
+                self.revision.solution_command(planned.episode_id, planned.repeat),
                 workspace,
                 self.revision.episode_environment(planned.episode_id),
                 max_output_bytes=resources.max_output_bytes,

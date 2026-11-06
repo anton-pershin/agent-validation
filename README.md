@@ -65,7 +65,7 @@ Use `/validate` for full validation and `/validate_partial` for partial validati
 
 ## Solution contract
 
-The service clones the repository into a temporary directory, checks out and verifies the exact commit, creates a fresh virtual environment, and installs the solution without editable mode. It starts `python -m reliable_agent` once for each episode. Arguments from `solution_overrides` are parsed without a shell.
+The service clones the repository into a temporary directory, checks out and verifies the exact commit, creates a fresh virtual environment, and installs the solution without editable mode. It starts `python -m reliable_agent` once for each episode. Arguments from `solution_overrides` are parsed without a shell. The `{repeat}` substring is replaced with the episode's one-based repeat number, so `--seed {repeat}` supplies a different seed for each repeat.
 
 The process communicates through versioned JSON Lines on standard input and output. Standard output carries protocol messages only. Standard error carries solution logs. See [the solution interface](docs/solution-interface.md).
 

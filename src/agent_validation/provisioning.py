@@ -122,13 +122,16 @@ class RevisionPreparer:
     def python(self) -> Path:
         return self.virtual_environment / "bin" / "python"
 
-    def solution_command(self, episode_id: str) -> list[str]:
+    def solution_command(self, episode_id: str, repeat: int) -> list[str]:
         runtime = self._episode_runtime(episode_id)
+        override_arguments = [
+            argument.replace("{repeat}", str(repeat)) for argument in self.override_arguments
+        ]
         return [
             str(runtime / "bin" / "python"),
             "-m",
             self.resolved_profile.profile.solution_module,
-            *self.override_arguments,
+            *override_arguments,
         ]
 
     def episode_environment(self, episode_id: str) -> dict[str, str]:
