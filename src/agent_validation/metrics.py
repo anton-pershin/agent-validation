@@ -48,6 +48,8 @@ class MetricCalculator:
             "task_success_rates": {},
             "overall_success_rates": {},
             "repeat_success_rates": {},
+            "fault_exposure_rates": {},
+            "fault_recovery_success_rates": {},
             "vacuous_metrics": [],
         }
         self._record_by_id: dict[str, EpisodeRecord] = {}
@@ -251,7 +253,7 @@ class MetricCalculator:
         if not task_ids:
             raise MetricError(f"Scenario {scenario_id} has no eligible tasks in scope")
         condition_id = f"failure/{scenario_id}"
-        self._require_fault_exposure(condition_id, task_ids)
+        self._record_fault_evidence(condition_id, task_ids)
         baseline = self._overall_rate(
             "unperturbed",
             f"unperturbed/for/failure/{scenario_id}",
@@ -278,7 +280,6 @@ class MetricCalculator:
         ]
         for scenario in scenarios:
             condition_id = f"failure/{scenario.id}"
-            self._require_fault_exposure(condition_id, task_ids)
             rates.append(
                 self._overall_rate(
                     condition_id,
@@ -394,15 +395,41 @@ class MetricCalculator:
                 f"Completed responses have missing or invalid likely_incorrect flags: {invalid}"
             )
 
-    def _require_fault_exposure(self, condition_id: str, task_ids: set[str] | None = None) -> None:
+    def _record_fault_evidence(self, condition_id: str, task_ids: set[str]) -> None:
         episodes = self._select(condition_id, task_ids=task_ids)
         records = self._records_for(episodes)
         if not records:
             raise MetricError(f"No planned episodes for condition {condition_id}")
-        if any(record.fault_exposure is not True for record in records):
-            raise MetricError(
-                f"Required fault exposure was not observed for every episode in {condition_id}"
+        records_by_task: dict[str, list[EpisodeRecord]] = defaultdict(list)
+        for record in records:
+            records_by_task[record.task_id].append(record)
+        exposure_task_rates: dict[str, float] = {}
+        recovery_task_rates: dict[str, float | None] = {}
+        for task_id, task_records in records_by_task.items():
+            exposed = [record for record in task_records if record.fault_exposure is True]
+            exposure_task_rates[task_id] = len(exposed) / len(task_records)
+            recovery_task_rates[task_id] = (
+                sum(record.success is True for record in exposed) / len(exposed)
+                if exposed
+                else None
             )
+        exposed_count = sum(record.fault_exposure is True for record in records)
+        recovery_values = [rate for rate in recovery_task_rates.values() if rate is not None]
+        fault_exposure_rates = self.intermediates["fault_exposure_rates"]
+        fault_recovery_rates = self.intermediates["fault_recovery_success_rates"]
+        assert isinstance(fault_exposure_rates, dict)
+        assert isinstance(fault_recovery_rates, dict)
+        scenario_id = condition_id.split("/", 1)[1]
+        fault_exposure_rates[scenario_id] = {
+            "overall": exposed_count / len(records),
+            "task_rates": exposure_task_rates,
+        }
+        fault_recovery_rates[scenario_id] = {
+            "overall": (
+                sum(recovery_values) / len(recovery_values) if recovery_values else None
+            ),
+            "task_rates": recovery_task_rates,
+        }
 
     def _threshold(self, key: str) -> str:
         key = key.split("/", 1)[0]

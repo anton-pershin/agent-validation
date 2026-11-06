@@ -61,7 +61,7 @@ failure_scenarios:
     action_name: pick_up
     occurrence: 1
     error_message: Temporary gripper failure. The world state did not change.
-    task_ids: [stack_ab, unstack_ab, restack_abc, stack_three, move_c, stack_bc, stack_ca, stack_ba, stack_cb, stack_ac, stack_ba_on_c, stack_ca_on_b, unstack_ba, unstack_ca, unstack_bc, restack_bca, restack_cab, restack_bac, tower_four, unstack_tower]
+    task_ids: [stack_ab, restack_abc, stack_three, move_c, stack_bc, stack_ca, stack_ba, stack_cb, stack_ac, stack_ba_on_c, stack_ca_on_b, restack_bca, restack_cab, restack_bac, tower_four]
   - id: unstack_failure
     action_name: unstack
     occurrence: 1

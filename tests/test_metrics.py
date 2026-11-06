@@ -282,23 +282,69 @@ def test_missing_record_insufficient_repeats_and_infrastructure_failure(tmp_path
     assert computations["VM9/maximum_action_attempts"].error_message is not None
 
 
-def test_missing_fault_exposure_fails_scenario_metrics_only(tmp_path: Path) -> None:
+def test_non_exposed_outcomes_count_in_scenario_metrics_and_coverage_evidence(
+    tmp_path: Path,
+) -> None:
     resolved, planned, records = metric_population(tmp_path)
     changed = deepcopy(records)
     next(record for record in changed if record.condition_id == "failure/f1").fault_exposure = False
-    computations = MetricCalculator(resolved, ValidationScope.FULL, planned, changed).compute()
-    assert (
-        computations["VM7/transient_failure_overall_success_rate_loss/f1"].error_message is not None
-    )
-    assert (
-        computations["VM8/transient_failure_overall_success_rate_range"].error_message is not None
-    )
+    next(
+        record
+        for record in changed
+        if record.condition_id == "failure/f1" and record.success is False
+    ).fault_exposure = False
+    calculator = MetricCalculator(resolved, ValidationScope.FULL, planned, changed)
+    computations = calculator.compute()
     assert computations[
-        "VM7/transient_failure_overall_success_rate_loss/f2"
+        "VM7/transient_failure_overall_success_rate_loss/f1"
+    ].computed_value == pytest.approx(0.0)
+    assert computations[
+        "VM8/transient_failure_overall_success_rate_range"
     ].computed_value == pytest.approx(0.25)
-    assert computations["VM1/unperturbed_overall_success_rate"].computed_value == pytest.approx(
-        0.75
-    )
+    assert computations[
+        "VM7/transient_failure_overall_success_rate_loss/f1"
+    ].error_message is None
+    assert computations[
+        "VM8/transient_failure_overall_success_rate_range"
+    ].error_message is None
+    assert calculator.intermediates["task_success_rates"]["failure/f1"] == {
+        "t1": 1.0,
+        "t2": 0.5,
+    }
+    assert calculator.intermediates["fault_exposure_rates"]["f1"] == {
+        "overall": 0.5,
+        "task_rates": {"t1": 0.5, "t2": 0.5},
+    }
+    assert calculator.intermediates["fault_recovery_success_rates"]["f1"] == {
+        "overall": 1.0,
+        "task_rates": {"t1": 1.0, "t2": 1.0},
+    }
+
+
+def test_zero_fault_exposure_keeps_metrics_computable_and_recovery_null(
+    tmp_path: Path,
+) -> None:
+    resolved, planned, records = metric_population(tmp_path)
+    changed = deepcopy(records)
+    for record in changed:
+        if record.condition_id == "failure/f1":
+            record.fault_exposure = False
+    calculator = MetricCalculator(resolved, ValidationScope.FULL, planned, changed)
+    computations = calculator.compute()
+    assert computations[
+        "VM7/transient_failure_overall_success_rate_loss/f1"
+    ].computed_value == pytest.approx(0.0)
+    assert computations[
+        "VM8/transient_failure_overall_success_rate_range"
+    ].computed_value == pytest.approx(0.25)
+    assert calculator.intermediates["fault_exposure_rates"]["f1"] == {
+        "overall": 0.0,
+        "task_rates": {"t1": 0.0, "t2": 0.0},
+    }
+    assert calculator.intermediates["fault_recovery_success_rates"]["f1"] == {
+        "overall": None,
+        "task_rates": {"t1": None, "t2": None},
+    }
 
 
 def test_failure_comparisons_use_matched_task_sets(tmp_path: Path) -> None:
