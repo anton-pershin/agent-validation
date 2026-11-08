@@ -24,7 +24,7 @@ Expected behavior variants:
 - **T2. Shortest-plan difficulty.** Parse all hard tasks and use an independent breadth-first search over Blocks World states to find each shortest successful plan. Assert six eight-action plans, eight ten-action plans, six twelve-action plans, and a mean length of ten. Covers B4 and R4.
 - **T3. Task validity and failure coverage.** Assert 20 unique task identifiers and 20 unique initial-state and goal pairs. Execute every shortest plan through `BlocksWorldEnvironment`, assert goal satisfaction, and assert the action coverage from R6. Covers R5 and R6.
 - **T4. Metric compatibility.** Compute all metrics and criteria over the complete planned hard population with scripted successful episode records. Assert that every metric computes and every criterion is accepted. Covers B5.
-- **T5. Regression and documentation checks.** Assert that the default population counts remain 890 and 42. Check the profile documentation. Run the complete test suite, Ruff, and whitespace checks. Covers B1 and R7.
+- **T5. Service and regression checks.** Run an actual partial validation with `blocksworld_hard` and the local scripted solution. Assert 42 successful episode records, 12 fault exposures, and accepted AC1–AC7 results. Assert that the default population counts remain 890 and 42. Check the profile documentation. Run the complete test suite, Ruff, and whitespace checks. Covers B1, B3, B5, and R7.
 
 ### 3. Implementation plan
 
