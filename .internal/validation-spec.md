@@ -88,6 +88,7 @@ A criterion can pass only when all its required metric instances are computed ov
 | Profile | Solution subproject | ACs in scope | Threshold overrides |
 |---------|---------------------|--------------|---------------------|
 | default | `reliable-agent` (`https://github.com/anton-pershin/reliable-agent`) | AC1–AC7 | No overrides; use the defaults defined in Section 3. |
+| blocksworld_hard | `reliable-agent` (`https://github.com/anton-pershin/reliable-agent`) | AC1–AC7 | No overrides; use the defaults defined in Section 3. |
 
 The `default` profile uses the PDDL Blocks World benchmark.
 
