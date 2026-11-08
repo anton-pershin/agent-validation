@@ -94,6 +94,8 @@ The process communicates through versioned JSON Lines on standard input and outp
 
 Profiles are YAML files in `config/profiles`. A profile defines task files, conditions, repeats, thresholds, time and action limits, resource limits, and environment variables forwarded to the solution. Problem paths are relative to the profile file. The `default` full profile has 20 distinct tasks and 10 repeats per condition, producing 840 episodes. The partial profile has the former five-task, two-repeat population with 42 episodes. `pick_up_failure` is eligible for 15 full tasks that require pick-up and retains its original four tasks in partial validation. `unstack_failure` is eligible for nine stacked tasks.
 
+The `blocksworld_hard` profile has the same acceptance thresholds and population sizes as `default`: 890 full episodes and 42 partial episodes. Its 20 distinct tasks have six eight-action, eight ten-action, and six twelve-action shortest successful plans, giving a mean optimal plan length of ten actions. Optimal plan length counts only state-changing movement actions. It excludes action-catalog requests, rejected actions, injected failures, and retries. Tests verify these lengths with an independent breadth-first search. `pick_up_failure` applies to all 20 full tasks and four partial tasks. `unstack_failure` applies to nine full tasks and two partial tasks.
+
 Configuration environment variables:
 
 - `AGENT_VALIDATION_PROFILE`: default profile name; initially `default`.

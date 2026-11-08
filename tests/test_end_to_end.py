@@ -407,3 +407,22 @@ def test_default_partial_population(git_solution, tmp_path: Path) -> None:
         "failure/pick_up_failure",
         "failure/unstack_failure",
     }
+
+
+def test_blocksworld_hard_partial_service(git_solution, tmp_path: Path) -> None:
+    repo, first, _ = git_solution
+    settings = ServiceSettings(
+        profile_dir=Path(__file__).resolve().parents[1] / "config" / "profiles",
+        artifact_root=tmp_path / "artifacts",
+        temporary_root=tmp_path / "temporary",
+        active_profile="blocksworld_hard",
+    )
+    result = run_validation(settings, repo, first)
+    records = records_for(run_directories(settings)[0])
+    assert result["profile"] == "blocksworld_hard"
+    assert result["validation_scope"] == "partial"
+    assert len(records) == 42
+    assert all(record.success is True for record in records)
+    assert sum(record.fault_exposure is True for record in records) == 12
+    for criterion in ("AC1", "AC2", "AC3", "AC4", "AC5", "AC6", "AC7"):
+        assert result[criterion]["status"] == "accepted", criterion
