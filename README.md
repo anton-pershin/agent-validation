@@ -49,6 +49,27 @@ Start the service:
 AGENT_VALIDATION_PROFILE=default .venv/bin/agent-validation-api
 ```
 
+For a complete Caila-backed example on port 8587, set `CAILA_API_KEY` through your secret-management setup and run this command from the repository root:
+
+```bash
+export OPENAI_BASE_URL="https://caila.io/api/openai/v1"
+export OPENAI_API_KEY="${CAILA_API_KEY:?Set CAILA_API_KEY first}"
+
+PYTHONPATH=src \
+AGENT_VALIDATION_PROFILE_DIR="$PWD/config/profiles" \
+AGENT_VALIDATION_ARTIFACT_DIR="/tmp/opencode/validation-artifacts-8587" \
+AGENT_VALIDATION_TEMP_DIR="/tmp/opencode/validation-temp-8587" \
+AGENT_VALIDATION_HOST="127.0.0.1" \
+AGENT_VALIDATION_PORT=8587 \
+/home/tony/venvs/agent-validation/bin/agent-validation-api
+```
+
+Use `.venv/bin/agent-validation-api` or the equivalent executable in your environment. Keep credentials out of the command itself and do not commit them. Check that the service is available with:
+
+```bash
+curl --fail http://127.0.0.1:8587/openapi.json >/dev/null
+```
+
 Send a request:
 
 ```bash
