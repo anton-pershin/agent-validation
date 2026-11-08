@@ -1,0 +1,115 @@
+name: blocksworld_hard
+solution_module: reliable_agent
+random_seed: 0
+original_instructions: >-
+  Solve the Blocks World task in the supplied PDDL problem. Use the available
+  actions and observations. Declare completion only after the goal is satisfied.
+  Return a concise answer, confidence, likely_incorrect, and a short reason.
+tasks:
+  - id: rebuild_01
+    problem: ../blocks_world/problems/hard/rebuild_01.pddl
+  - id: rebuild_02
+    problem: ../blocks_world/problems/hard/rebuild_02.pddl
+  - id: rebuild_03
+    problem: ../blocks_world/problems/hard/rebuild_03.pddl
+  - id: rebuild_04
+    problem: ../blocks_world/problems/hard/rebuild_04.pddl
+  - id: rebuild_05
+    problem: ../blocks_world/problems/hard/rebuild_05.pddl
+  - id: rebuild_06
+    problem: ../blocks_world/problems/hard/rebuild_06.pddl
+  - id: rebuild_07
+    problem: ../blocks_world/problems/hard/rebuild_07.pddl
+  - id: rebuild_08
+    problem: ../blocks_world/problems/hard/rebuild_08.pddl
+  - id: rebuild_09
+    problem: ../blocks_world/problems/hard/rebuild_09.pddl
+  - id: rebuild_10
+    problem: ../blocks_world/problems/hard/rebuild_10.pddl
+  - id: rebuild_11
+    problem: ../blocks_world/problems/hard/rebuild_11.pddl
+  - id: rebuild_12
+    problem: ../blocks_world/problems/hard/rebuild_12.pddl
+  - id: rebuild_13
+    problem: ../blocks_world/problems/hard/rebuild_13.pddl
+  - id: rebuild_14
+    problem: ../blocks_world/problems/hard/rebuild_14.pddl
+  - id: rebuild_15
+    problem: ../blocks_world/problems/hard/rebuild_15.pddl
+  - id: rebuild_16
+    problem: ../blocks_world/problems/hard/rebuild_16.pddl
+  - id: rebuild_17
+    problem: ../blocks_world/problems/hard/rebuild_17.pddl
+  - id: rebuild_18
+    problem: ../blocks_world/problems/hard/rebuild_18.pddl
+  - id: rebuild_19
+    problem: ../blocks_world/problems/hard/rebuild_19.pddl
+  - id: rebuild_20
+    problem: ../blocks_world/problems/hard/rebuild_20.pddl
+prompt_variants:
+  - id: concise
+    instructions: >-
+      Complete the supplied Blocks World PDDL task. Act from observations,
+      check the goal, and then send the required self-assessed final response.
+  - id: formal
+    instructions: >-
+      Your objective is to reach every goal predicate in the provided PDDL
+      problem. Use environment feedback to select actions. When finished,
+      explicitly declare completion and assess whether your answer may be wrong.
+failure_scenarios:
+  - id: pick_up_failure
+    action_name: pick_up
+    occurrence: 1
+    error_message: Temporary gripper failure. The world state did not change.
+    task_ids: [rebuild_01, rebuild_02, rebuild_03, rebuild_04, rebuild_05, rebuild_06, rebuild_07, rebuild_08, rebuild_09, rebuild_10, rebuild_11, rebuild_12, rebuild_13, rebuild_14, rebuild_15, rebuild_16, rebuild_17, rebuild_18, rebuild_19, rebuild_20]
+  - id: unstack_failure
+    action_name: unstack
+    occurrence: 1
+    error_message: Temporary gripper failure. The world state did not change.
+    task_ids: [rebuild_01, rebuild_03, rebuild_06, rebuild_08, rebuild_10, rebuild_12, rebuild_14, rebuild_17, rebuild_19]
+full:
+  task_ids: [rebuild_01, rebuild_02, rebuild_03, rebuild_04, rebuild_05, rebuild_06, rebuild_07, rebuild_08, rebuild_09, rebuild_10, rebuild_11, rebuild_12, rebuild_13, rebuild_14, rebuild_15, rebuild_16, rebuild_17, rebuild_18, rebuild_19, rebuild_20]
+  repeats: 10
+  prompt_variant_ids: [concise, formal]
+  failure_scenario_ids: [pick_up_failure, unstack_failure]
+partial:
+  task_ids: [rebuild_01, rebuild_02, rebuild_03, rebuild_04, rebuild_05]
+  repeats: 2
+  prompt_variant_ids: [concise, formal]
+  failure_scenario_ids: [pick_up_failure, unstack_failure]
+  failure_task_ids:
+    pick_up_failure: [rebuild_01, rebuild_03, rebuild_04, rebuild_05]
+    unstack_failure: [rebuild_01, rebuild_03]
+acceptance_criteria: [AC1, AC2, AC3, AC4, AC5, AC6, AC7]
+criteria:
+  AC1:
+    min_success_rate: 0.95
+  AC2:
+    min_precision: 0.80
+    min_recall: 0.50
+  AC3:
+    max_range: 0.05
+  AC4:
+    max_loss: 0.05
+    max_range: 0.05
+  AC5:
+    max_loss: 0.05
+    max_range: 0.05
+  AC6:
+    max_action_attempts: 50
+  AC7:
+    min_timely_response_rate: 0.95
+    time_limit_seconds: 300
+resources:
+  episode_concurrency: 4
+  max_output_bytes: 1000000
+  max_retained_log_bytes: 65536
+  max_provisioning_output_bytes: 1000000
+  install_timeout_seconds: 300
+  git_timeout_seconds: 120
+  process_shutdown_seconds: 2
+environment:
+  passthrough:
+    - OPENAI_API_KEY
+    - OPENAI_BASE_URL
+    - ANTHROPIC_API_KEY
