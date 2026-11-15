@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -17,6 +18,8 @@ from agent_validation.contracts import (
     ValidationScope,
 )
 from agent_validation.metrics import CriterionEvaluator, MetricCalculator
+from agent_validation.protocol import SolutionProcess
+from agent_validation.provisioning import RevisionPreparer
 
 
 def run_validation(
@@ -42,6 +45,38 @@ def records_for(run_directory: Path) -> list[EpisodeRecord]:
         EpisodeRecord.model_validate(json.loads(line))
         for line in (run_directory / "episodes.jsonl").read_text().splitlines()
     ]
+
+
+def track_episode_cleanup(monkeypatch) -> tuple[list[str], dict[str, int]]:
+    original_cleanup = RevisionPreparer.cleanup_episode
+    original_close = SolutionProcess.close
+    cleaned: list[str] = []
+    closed: set[str] = set()
+    peaks = {"episode-runtimes": 0, "homes": 0, "workspaces": 0}
+    lock = threading.Lock()
+
+    def close(process: SolutionProcess) -> None:
+        original_close(process)
+        with lock:
+            closed.add(process.cwd.name)
+
+    def cleanup(revision: RevisionPreparer, episode_id: str) -> None:
+        with lock:
+            assert episode_id in closed
+        parents = (revision.episode_runtimes, revision.homes, revision.workspaces)
+        counts = {parent.name: len(list(parent.iterdir())) for parent in parents}
+        with lock:
+            for name, count in counts.items():
+                peaks[name] = max(peaks[name], count)
+        original_cleanup(revision, episode_id)
+        for parent in parents:
+            assert not (parent / episode_id).exists()
+        with lock:
+            cleaned.append(episode_id)
+
+    monkeypatch.setattr(SolutionProcess, "close", close)
+    monkeypatch.setattr(RevisionPreparer, "cleanup_episode", cleanup)
+    return cleaned, peaks
 
 
 def test_repeat_placeholder_reaches_each_episode_solution(
@@ -158,18 +193,29 @@ def test_overlapping_validations_do_not_mix_revisions_or_evidence(
 
 
 def test_concurrent_episodes_keep_state_isolated(
-    service_settings: ServiceSettings, git_solution
+    service_settings: ServiceSettings, git_solution, monkeypatch
 ) -> None:
     profile_path = service_settings.profile_dir / "test.yaml"
     data = yaml.safe_load(profile_path.read_text())
     data["resources"]["episode_concurrency"] = 2
     profile_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    cleaned, peaks = track_episode_cleanup(monkeypatch)
+    original_start = SolutionProcess.start
+    active_pair = threading.Barrier(2)
+
+    def wait_for_active_pair(process: SolutionProcess) -> None:
+        original_start(process)
+        active_pair.wait(timeout=5)
+
+    monkeypatch.setattr(SolutionProcess, "start", wait_for_active_pair)
     repo, first, _ = git_solution
     run_validation(service_settings, repo, first, "mutate_state")
     records = records_for(run_directories(service_settings)[0])
     assert len(records) == 6
     assert all(record.success is True for record in records)
     assert {record.answer for record in records} == {"revision-one"}
+    assert sorted(cleaned) == sorted(record.episode_id for record in records)
+    assert all(count == 2 for count in peaks.values())
 
 
 def single_episode_settings(settings: ServiceSettings, **criteria_updates) -> ServiceSettings:
@@ -203,15 +249,18 @@ def single_episode_settings(settings: ServiceSettings, **criteria_updates) -> Se
 def test_solution_failure_records(
     service_settings: ServiceSettings,
     git_solution,
+    monkeypatch,
     behavior: str,
     termination: str,
     success: bool,
     final_received: bool,
 ) -> None:
     settings = single_episode_settings(service_settings)
+    cleaned, _ = track_episode_cleanup(monkeypatch)
     repo, first, _ = git_solution
     result = run_validation(settings, repo, first, behavior)
     record = records_for(run_directories(settings)[0])[0]
+    assert cleaned == [record.episode_id]
     assert record.termination_reason == termination
     assert record.success is success
     assert record.final_response_received is final_received
@@ -240,12 +289,14 @@ def test_invalid_self_assessment_is_retained_and_fails_error_awareness(
 
 
 def test_timeout_kills_solution_process_group(
-    service_settings: ServiceSettings, git_solution
+    service_settings: ServiceSettings, git_solution, monkeypatch
 ) -> None:
     settings = single_episode_settings(service_settings, AC7={"time_limit_seconds": 0.2})
+    cleaned, _ = track_episode_cleanup(monkeypatch)
     repo, first, _ = git_solution
     result = run_validation(settings, repo, first, "timeout")
     record = records_for(run_directories(settings)[0])[0]
+    assert cleaned == [record.episode_id]
     assert record.termination_reason == "timeout"
     assert record.elapsed_seconds < 3
     assert result["AC7"]["status"] == "valid"

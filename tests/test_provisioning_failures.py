@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 from agent_validation.application import ServiceSettings, ValidationApplication
 from agent_validation.config import load_profile
@@ -168,3 +170,116 @@ def test_cleanup_failure_is_reported(
     monkeypatch.setattr("agent_validation.provisioning.shutil.rmtree", fail_remove)
     revision.close()
     assert "simulated cleanup failure" in revision.cleanup_error
+
+
+def test_episode_cleanup_removes_only_episode_resources(
+    service_settings: ServiceSettings, tmp_path: Path
+) -> None:
+    resolved = load_profile("test", service_settings.profile_dir)
+    revision = RevisionPreparer("/unused", "a" * 40, "", resolved, tmp_path / "temporary")
+    episode_id = "episode-to-clean"
+    parents = (revision.episode_runtimes, revision.homes, revision.workspaces)
+    revision.checkout.mkdir()
+    revision.virtual_environment.mkdir()
+    for parent in parents:
+        parent.mkdir()
+        (parent / episode_id).mkdir()
+    revision._episode_venvs[episode_id] = revision.episode_runtimes / episode_id
+
+    try:
+        revision.cleanup_episode(episode_id)
+        assert all(not (parent / episode_id).exists() for parent in parents)
+        assert all(parent.exists() for parent in parents)
+        assert revision.checkout.exists()
+        assert revision.virtual_environment.exists()
+        assert episode_id not in revision._episode_venvs
+        assert revision.cleanup_error is None
+
+        revision.cleanup_episode(episode_id)
+        assert revision.cleanup_error is None
+
+        partial_id = "episode-with-partial-setup"
+        (revision.workspaces / partial_id).mkdir()
+        revision.cleanup_episode(partial_id)
+        assert not (revision.workspaces / partial_id).exists()
+        assert revision.cleanup_error is None
+    finally:
+        revision.close()
+
+
+def test_episode_cleanup_failure_is_recorded_and_other_removals_continue(
+    service_settings: ServiceSettings, tmp_path: Path, monkeypatch
+) -> None:
+    resolved = load_profile("test", service_settings.profile_dir)
+    revision = RevisionPreparer("/unused", "a" * 40, "", resolved, tmp_path / "temporary")
+    episode_id = "episode-with-cleanup-failure"
+    parents = (revision.episode_runtimes, revision.homes, revision.workspaces)
+    for parent in parents:
+        parent.mkdir()
+        (parent / episode_id).mkdir()
+    runtime = revision.episode_runtimes / episode_id
+    revision._episode_venvs[episode_id] = runtime
+    original_rmtree = shutil.rmtree
+
+    def fail_runtime(path, *args, **kwargs):
+        if Path(path) == runtime:
+            raise OSError("simulated episode cleanup failure")
+        return original_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr("agent_validation.provisioning.shutil.rmtree", fail_runtime)
+    try:
+        revision.cleanup_episode(episode_id)
+        assert runtime.exists()
+        assert not (revision.homes / episode_id).exists()
+        assert not (revision.workspaces / episode_id).exists()
+        assert episode_id not in revision._episode_venvs
+        assert episode_id in revision.cleanup_error
+        assert "simulated episode cleanup failure" in revision.cleanup_error
+    finally:
+        revision.close()
+
+
+def test_episode_cleanup_failure_preserves_episode_evidence(
+    service_settings: ServiceSettings, git_solution, monkeypatch
+) -> None:
+    profile_path = service_settings.profile_dir / "test.yaml"
+    data = yaml.safe_load(profile_path.read_text())
+    data["partial"] = {
+        "task_ids": ["stack_ab"],
+        "repeats": 1,
+        "prompt_variant_ids": [],
+        "failure_scenario_ids": [],
+    }
+    profile_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    repo, commit, _ = git_solution
+    original_rmtree = shutil.rmtree
+    failed = False
+
+    def fail_first_episode_runtime(path, *args, **kwargs):
+        nonlocal failed
+        candidate = Path(path)
+        if not failed and candidate.parent.name == "episode-runtimes":
+            failed = True
+            raise OSError("simulated episode cleanup failure")
+        return original_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(
+        "agent_validation.provisioning.shutil.rmtree", fail_first_episode_runtime
+    )
+    request = ValidationRequest(
+        repo=str(repo), commit=commit, solution_overrides="--behavior success"
+    )
+    with pytest.raises(ProvisioningError, match="simulated episode cleanup failure"):
+        ValidationApplication(service_settings).validate(request, ValidationScope.PARTIAL)
+
+    run_directory = next(service_settings.artifact_root.iterdir())
+    configuration = json.loads((run_directory / "run.json").read_text())
+    assert configuration["status"] == "failed"
+    assert "simulated episode cleanup failure" in configuration["cleanup_error"]
+    assert not Path(configuration["temporary_root"]).exists()
+    record = json.loads((run_directory / "episodes.jsonl").read_text().strip())
+    episode_evidence = run_directory / "episodes" / record["episode_id"]
+    assert record["episode_id"] in configuration["cleanup_error"]
+    assert (episode_evidence / "record.json").exists()
+    assert (episode_evidence / "protocol.jsonl").exists()
+    assert (episode_evidence / "solution-stderr.log").exists()
