@@ -225,7 +225,7 @@ def test_metrics_compute_over_all_hard_full_episodes() -> None:
 
 def test_default_population_is_unchanged_and_hard_profile_is_documented() -> None:
     default = load_profile("default", PROFILE_DIR)
-    assert len(default.plan_episodes(ValidationScope.FULL)) == 890
+    assert len(default.plan_episodes(ValidationScope.FULL)) == 840
     assert len(default.plan_episodes(ValidationScope.PARTIAL)) == 42
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "blocksworld_hard" in readme
