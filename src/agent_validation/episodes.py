@@ -214,24 +214,29 @@ class EpisodeExecutor:
             failure_kind = "infrastructure"
             error_message = f"{type(exc).__name__}: {exc}"
         finally:
-            if elapsed_seconds is None and started_at is not None:
-                elapsed_seconds = max(0.0, time.monotonic() - started_at)
-            if process is not None:
-                process.close()
-                if process.output_limit_exceeded and failure_kind == "none":
-                    success = False
-                    termination_reason = "output_limit_exceeded"
-                    failure_kind = "solution"
-                    error_message = "Solution standard error exceeded its limit"
-                if process.cleanup_error:
-                    success = False
-                    termination_reason = "infrastructure_error"
-                    failure_kind = "infrastructure"
-                    error_message = process.cleanup_error
-                self.store.write_solution_log(planned.episode_id, process.stderr_text())
-                if process.last_raw_output and termination_reason == "malformed_output":
-                    self.store.write_raw_protocol_error(planned.episode_id, process.last_raw_output)
-            self.store.write_protocol(planned.episode_id, transcript)
+            try:
+                if elapsed_seconds is None and started_at is not None:
+                    elapsed_seconds = max(0.0, time.monotonic() - started_at)
+                if process is not None:
+                    process.close()
+                    if process.output_limit_exceeded and failure_kind == "none":
+                        success = False
+                        termination_reason = "output_limit_exceeded"
+                        failure_kind = "solution"
+                        error_message = "Solution standard error exceeded its limit"
+                    if process.cleanup_error:
+                        success = False
+                        termination_reason = "infrastructure_error"
+                        failure_kind = "infrastructure"
+                        error_message = process.cleanup_error
+                    self.store.write_solution_log(planned.episode_id, process.stderr_text())
+                    if process.last_raw_output and termination_reason == "malformed_output":
+                        self.store.write_raw_protocol_error(
+                            planned.episode_id, process.last_raw_output
+                        )
+                self.store.write_protocol(planned.episode_id, transcript)
+            finally:
+                self.revision.cleanup_episode(planned.episode_id)
 
         infrastructure_failure = failure_kind == "infrastructure"
         record = EpisodeRecord(

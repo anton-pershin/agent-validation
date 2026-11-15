@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import Mock
 
 from agent_validation.blocks_world import BlocksWorldEnvironment
 from agent_validation.config import load_profile
@@ -21,7 +22,9 @@ def test_benchmark_failure_is_infrastructure_not_solution_failure(
 
     monkeypatch.setattr(BlocksWorldEnvironment, "from_pddl", fail_benchmark)
     store = RunStore(tmp_path / "artifacts", "infrastructure-test")
-    record = EpisodeExecutor(resolved, object(), store).execute(planned)
+    revision = Mock()
+    record = EpisodeExecutor(resolved, revision, store).execute(planned)
+    revision.cleanup_episode.assert_called_once_with(planned.episode_id)
     assert record.success is None
     assert record.action_attempts is None
     assert record.final_response_received is None

@@ -53,6 +53,7 @@ class RevisionPreparer:
         self.events: list[dict[str, object]] = []
         self._reset_lock = threading.Lock()
         self._runtime_lock = threading.Lock()
+        self._cleanup_lock = threading.Lock()
         self._episode_venvs: dict[str, Path] = {}
         self._closed = False
 
@@ -155,6 +156,20 @@ class RevisionPreparer:
         workspace.mkdir(exist_ok=False)
         return workspace
 
+    def cleanup_episode(self, episode_id: str) -> None:
+        """Release resources owned by one episode without suppressing its evidence."""
+        with self._runtime_lock:
+            self._episode_venvs.pop(episode_id, None)
+        for parent in (self.episode_runtimes, self.homes, self.workspaces):
+            try:
+                shutil.rmtree(parent / episode_id)
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                self._record_cleanup_error(
+                    f"Cannot remove {parent.name} for episode {episode_id}: {exc}"
+                )
+
     def reset_checkout(self) -> None:
         """Discard checkout writes; episodes execute from the installed environment."""
         with self._reset_lock:
@@ -185,7 +200,12 @@ class RevisionPreparer:
             if self.temporary_root.exists():
                 shutil.rmtree(self.temporary_root)
         except OSError as exc:
-            self.cleanup_error = f"Cannot remove temporary resources: {exc}"
+            self._record_cleanup_error(f"Cannot remove temporary resources: {exc}")
+
+    def _record_cleanup_error(self, message: str) -> None:
+        with self._cleanup_lock:
+            if self.cleanup_error is None:
+                self.cleanup_error = message
 
     def _run(self, command: list[str], stage: str, timeout: float) -> str:
         resources = self.resolved_profile.profile.resources
