@@ -9,7 +9,12 @@ from fastapi.testclient import TestClient
 
 from agent_validation.api import create_app
 from agent_validation.application import ValidationApplication
-from agent_validation.cli import main
+from agent_validation.cli import _write_result, main
+from agent_validation.config import (
+    complete_configuration_schema,
+    load_profile,
+    resolve_partial_profile,
+)
 from agent_validation.contracts import ValidationRequest, ValidationScope
 from agent_validation.errors import (
     InvalidRequestError,
@@ -105,6 +110,13 @@ def test_real_configuration_discovery_is_complete_and_secret_free(
     service_settings, monkeypatch
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "discovery-secret")
+    profile_path = service_settings.profile_dir / "test.yaml"
+    profile_path.write_text(
+        profile_path.read_text().replace(
+            "Solve the supplied task.", "OPENAI_API_KEY=discovery-secret"
+        ),
+        encoding="utf-8",
+    )
     client = TestClient(create_app(service_settings))
     response = client.get("/profiles/test/configuration")
     assert response.status_code == 200
@@ -114,6 +126,50 @@ def test_real_configuration_discovery_is_complete_and_secret_free(
     assert document["configuration"]["name"] == "test"
     assert set(document["schema"]["required"]) == set(document["configuration"])
     assert client.get("/profiles/missing/configuration").status_code == 404
+
+
+def test_partial_schema_error_does_not_echo_submitted_value(service_settings) -> None:
+    client = TestClient(create_app(service_settings))
+    configuration = client.get("/profiles/test/configuration").json()["configuration"]
+    configuration["random_seed"] = "seed-secret"
+    response = client.post(
+        "/validate_partial",
+        json={
+            "repo": "/unused",
+            "commit": COMMIT,
+            "configuration": configuration,
+        },
+    )
+    assert response.status_code == 400
+    assert "seed-secret" not in response.text
+    configuration["random_seed"] = 0
+    malformed = client.post(
+        "/validate_partial",
+        json={
+            "repo": "/unused",
+            "commit": COMMIT,
+            "solution_overrides": "'unterminated",
+            "configuration": configuration,
+        },
+    )
+    assert malformed.status_code == 400
+    assert not service_settings.artifact_root.exists()
+
+
+def test_discovery_schema_is_not_changed_by_short_secrets(
+    service_settings, monkeypatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "a")
+    response = TestClient(create_app(service_settings)).get(
+        "/profiles/test/configuration"
+    )
+    assert response.status_code == 200
+    document = response.json()
+    assert document["schema"] == complete_configuration_schema()
+    base = load_profile("test", service_settings.profile_dir)
+    assert document["configuration"] == base.profile.model_dump(mode="json")
+    resubmitted = resolve_partial_profile(base, document["configuration"])
+    assert resubmitted.effective_sha256 == base.effective_sha256
 
 
 def test_post_creation_http_error_contains_run_identity(service_settings) -> None:
@@ -152,6 +208,26 @@ def test_cli_writes_result_and_uses_zero_for_valid_criteria(monkeypatch, tmp_pat
     assert stub.calls[0][1] == ValidationScope.PARTIAL
     assert stub.calls[0][2] == "test"
     assert stub.calls[0][3] == {}
+
+
+def test_cli_output_cannot_overwrite_earlier_run_evidence(tmp_path: Path) -> None:
+    first = tmp_path / "first-run"
+    second = tmp_path / "second-run"
+    first.mkdir()
+    second.mkdir()
+    (first / "run.json").write_text('{"status": "completed"}', encoding="utf-8")
+    (second / "run.json").write_text('{"status": "completed"}', encoding="utf-8")
+    original = b'{"run_id": "first"}\n'
+    (first / "result.json").write_bytes(original)
+    (second / "result.json").write_text('{"run_id": "second"}\n', encoding="utf-8")
+    result = {"run_id": "second", "artifacts_location": str(second)}
+    with pytest.raises(OSError, match="Refusing to overwrite"):
+        _write_result(result, first / "result.json")
+    assert (first / "result.json").read_bytes() == original
+    with pytest.raises(OSError, match="Refusing to overwrite"):
+        _write_result(result, second / "run.json")
+    _write_result(result, second / "result.json")
+    assert (second / "result.json").read_text() == '{"run_id": "second"}\n'
 
 
 def test_cli_returns_one_when_operation_cannot_complete(monkeypatch, tmp_path: Path) -> None:

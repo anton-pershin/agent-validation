@@ -131,6 +131,8 @@ def test_exact_commit_evidence_recomputation_and_cleanup(
     run_configuration = json.loads((first_run / "run.json").read_text())
     assert run_configuration["verified_commit"] == first
     assert run_configuration["status"] == "completed"
+    assert run_configuration["artifacts"]["episode_records"] == "episodes.jsonl"
+    assert run_configuration["artifacts"]["episode_artifacts"] == "episodes"
     assert "typing_extensions" in run_configuration["solution_dependencies"]
     assert (first_run / "provisioning.json").exists()
     assert not Path(run_configuration["temporary_root"]).exists()

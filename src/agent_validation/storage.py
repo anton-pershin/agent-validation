@@ -68,9 +68,10 @@ class RunStore:
         else:
             configuration["updated_at"] = datetime.now(UTC).isoformat()
             value = configuration
-        self.write_json("run.json", value, redact=True)
-        if terminal:
-            self._terminal = True
+        with self._lock:
+            self.write_json("run.json", value, redact=True)
+            if terminal:
+                self._terminal = True
 
     def write_planned_episodes(self, episodes: list[PlannedEpisode]) -> None:
         self.write_json(

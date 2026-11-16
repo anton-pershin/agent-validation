@@ -34,6 +34,7 @@ from .episodes import EpisodeExecutor
 from .errors import (
     InvalidRequestError,
     ProvisioningError,
+    RunAbortedError,
     RunDirectoryExistsError,
     ServiceCapacityError,
     bind_run_context,
@@ -41,7 +42,16 @@ from .errors import (
 from .metrics import CriterionEvaluator, MetricCalculator
 from .provenance import collect_validator_provenance, dependency_versions
 from .provisioning import RevisionPreparer
-from .security import collect_secret_values, redact_text, validate_commit, validate_repo
+from .security import (
+    collect_secret_values,
+    configuration_secret_values,
+    embedded_secret_values,
+    parse_solution_overrides,
+    redact_data,
+    redact_text,
+    validate_commit,
+    validate_repo,
+)
 from .storage import RunStore
 
 
@@ -85,7 +95,12 @@ class ValidationApplication:
         self._episode_slots = threading.BoundedSemaphore(resolved_settings.max_total_episodes)
 
     def profile_configuration(self, profile_name: str) -> dict[str, Any]:
-        return configuration_response(load_profile(profile_name, self.settings.profile_dir))
+        resolved = load_profile(profile_name, self.settings.profile_dir)
+        document = configuration_response(resolved)
+        document["configuration"] = redact_data(
+            document["configuration"], configuration_secret_values(resolved.profile)
+        )
+        return document
 
     def validate(
         self,
@@ -119,6 +134,7 @@ class ValidationApplication:
     ) -> ValidationResult:
         validate_repo(request.repo)
         validate_commit(request.commit)
+        parse_solution_overrides(request.solution_overrides)
         if validation_scope == ValidationScope.FULL and configuration is not None:
             raise InvalidRequestError("Full validation does not accept a modified configuration")
         if validation_scope == ValidationScope.PARTIAL and configuration is None:
@@ -130,34 +146,37 @@ class ValidationApplication:
             if validation_scope == ValidationScope.FULL
             else resolve_partial_profile(base, configuration or {})
         )
-        planned = resolved.plan_episodes()
         secret_values = collect_secret_values(request, resolved.profile)
-        revision = RevisionPreparer(
-            request.repo,
-            request.commit,
-            request.solution_overrides,
-            resolved,
-            self.settings.temporary_root,
-            secret_values,
-        )
-        try:
-            store = self._allocate_run(secret_values)
-        except Exception:
-            revision.close()
-            raise
+        store = self._allocate_run(secret_values)
         run_configuration = self._initial_manifest(
-            store, request, resolved, validation_scope, revision
+            store, request, resolved, validation_scope
         )
+        revision: RevisionPreparer | None = None
         try:
             store.write_run_configuration(run_configuration)
+            validator_provenance = collect_validator_provenance(
+                self.settings.validator_source_dir
+            )
+            secret_values.update(
+                embedded_secret_values(validator_provenance["diff"])
+            )
+            store.secret_values = secret_values
             run_configuration.implementation.update(
                 {
                     "dependencies": dependency_versions(),
-                    "validator": collect_validator_provenance(
-                        self.settings.validator_source_dir
-                    ),
+                    "validator": validator_provenance,
                 }
             )
+            revision = RevisionPreparer(
+                request.repo,
+                request.commit,
+                request.solution_overrides,
+                resolved,
+                self.settings.temporary_root,
+                secret_values,
+            )
+            run_configuration.temporary_root = str(revision.temporary_root)
+            planned = resolved.plan_episodes()
             store.write_run_configuration(run_configuration)
             store.write_planned_episodes(planned)
             run_configuration.artifacts["planned_episodes"] = "planned_episodes.json"
@@ -186,12 +205,16 @@ class ValidationApplication:
                 run_configuration,
             )
             return result
-        except (KeyboardInterrupt, asyncio.CancelledError) as exc:
-            bind_run_context(exc, store.run_id, store.artifacts_location)
+        except (KeyboardInterrupt, asyncio.CancelledError, RunAbortedError) as exc:
+            bind_run_context(
+                exc, store.run_id, store.artifacts_location, secret_values
+            )
             self._finish_interrupted(run_configuration, revision, store, exc, aborted=True)
             raise
         except Exception as exc:
-            bind_run_context(exc, store.run_id, store.artifacts_location)
+            bind_run_context(
+                exc, store.run_id, store.artifacts_location, secret_values
+            )
             self._finish_interrupted(run_configuration, revision, store, exc, aborted=False)
             raise
 
@@ -230,10 +253,24 @@ class ValidationApplication:
         if concurrency == 1:
             return [execute_bounded(episode) for episode in planned]
         records: list[EpisodeRecord] = []
-        with ThreadPoolExecutor(max_workers=concurrency) as pool:
-            futures = [pool.submit(execute_bounded, episode) for episode in planned]
+        pool = ThreadPoolExecutor(max_workers=concurrency)
+        futures = []
+        try:
+            for episode in planned:
+                futures.append(pool.submit(execute_bounded, episode))
             for future in futures:
                 records.append(future.result())
+        except BaseException:
+            try:
+                executor.cancel()
+            except Exception:
+                pass
+            for future in futures:
+                future.cancel()
+            pool.shutdown(wait=True, cancel_futures=True)
+            raise
+        else:
+            pool.shutdown(wait=True)
         return records
 
     def _initial_manifest(
@@ -242,7 +279,6 @@ class ValidationApplication:
         request: ValidationRequest,
         resolved: ResolvedProfile,
         validation_scope: ValidationScope,
-        revision: RevisionPreparer,
     ) -> RunManifest:
         now = datetime.now(UTC).isoformat()
         return RunManifest(
@@ -260,7 +296,7 @@ class ValidationApplication:
             resolved_configuration_sha256=resolved.effective_sha256,
             validation_scope=validation_scope,
             random_seed=resolved.profile.random_seed,
-            temporary_root=str(revision.temporary_root),
+            temporary_root="",
             implementation={
                 "version": __version__,
                 "python": sys.version,
@@ -271,24 +307,31 @@ class ValidationApplication:
             environment_variables_forwarded=sorted(
                 set(resolved.profile.environment.passthrough)
             ),
-            artifacts={"manifest": "run.json"},
+            artifacts={
+                "manifest": "run.json",
+                "episode_records": "episodes.jsonl",
+                "episode_artifacts": "episodes",
+            },
         )
 
     def _finish_interrupted(
         self,
         run_configuration: RunManifest,
-        revision: RevisionPreparer,
+        revision: RevisionPreparer | None,
         store: RunStore,
         error: BaseException,
         *,
         aborted: bool,
     ) -> None:
-        revision.close()
-        run_configuration.verified_commit = revision.verified_commit
-        run_configuration.solution_dependencies = revision.dependency_manifest
-        run_configuration.cleanup_error = revision.cleanup_error
+        events: list[dict[str, object]] = []
+        if revision is not None:
+            revision.close()
+            run_configuration.verified_commit = revision.verified_commit
+            run_configuration.solution_dependencies = revision.dependency_manifest
+            run_configuration.cleanup_error = revision.cleanup_error
+            events = revision.events
         try:
-            store.write_provisioning_events(revision.events)
+            store.write_provisioning_events(events)
             run_configuration.artifacts["provisioning"] = "provisioning.json"
             if aborted:
                 store.mark_aborted(run_configuration, str(error) or "Validation was aborted")
@@ -301,7 +344,9 @@ class ValidationApplication:
 def error_details(exc: BaseException) -> dict[str, Any]:
     details: dict[str, Any] = {
         "type": type(exc).__name__,
-        "message": redact_text(str(exc))[:4096],
+        "message": redact_text(
+            str(exc), getattr(exc, "secret_values", set())
+        )[:4096],
     }
     for key in ("run_id", "artifacts_location"):
         value = getattr(exc, key, None)

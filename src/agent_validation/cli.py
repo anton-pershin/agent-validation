@@ -75,9 +75,14 @@ def main(scope: ValidationScope, arguments: Sequence[str] | None = None) -> int:
 
 
 def _write_result(result: dict, destination: Path) -> None:
-    source = Path(result["artifacts_location"]) / "result.json"
-    if source.exists() and source.resolve() == destination.resolve():
+    current_run = Path(result["artifacts_location"]).resolve()
+    source = current_run / "result.json"
+    resolved_destination = destination.resolve()
+    if source.exists() and source.resolve() == resolved_destination:
         return
+    for parent in (resolved_destination.parent, *resolved_destination.parents):
+        if (parent / "run.json").is_file():
+            raise OSError(f"Refusing to overwrite validation run evidence: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
     if source.exists():

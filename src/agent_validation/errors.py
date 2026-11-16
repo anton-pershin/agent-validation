@@ -41,6 +41,10 @@ class ProvenanceError(ValidationServiceError):
     """The exact validator source and runtime cannot be established."""
 
 
+class RunAbortedError(ValidationServiceError):
+    """Validation was cooperatively aborted."""
+
+
 class SolutionProtocolError(Exception):
     """The solution emitted an invalid protocol message."""
 
@@ -57,7 +61,13 @@ class SolutionExitedError(Exception):
     """The solution process exited before a final response."""
 
 
-def bind_run_context(error: BaseException, run_id: str, artifacts_location: str) -> None:
-    """Attach public run identity without changing the original exception type."""
+def bind_run_context(
+    error: BaseException,
+    run_id: str,
+    artifacts_location: str,
+    secret_values: set[str] | None = None,
+) -> None:
+    """Attach public run identity and redaction context without changing its type."""
     error.run_id = run_id
     error.artifacts_location = artifacts_location
+    error.secret_values = secret_values or set()

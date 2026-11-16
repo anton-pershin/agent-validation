@@ -328,8 +328,8 @@ flowchart TD
 | M1 | Initial validation service | Done | Exact-revision CLI/HTTP Blocks World validation with VM1–VM10, AC1–AC7, and retained episode evidence. | 2 weeks | Not applicable |
 | M2 | Metric and profile correctness | Done | Informative metric keys, explicit vacuous-truth evidence, repeat-aware overrides, scaled populations, coverage-aware resilience evidence, and the hard profile. | 2 weeks | Not applicable |
 | M3 | Episode resource lifecycle | Done | Isolated per-episode runtime copies and reliable cleanup of solution and provisioning process trees and temporary resources. | 1 week | Not applicable |
-| M4 | Flexible validation configuration | Doing | Registered full-only profiles, schema discovery, arbitrary complete partial configurations, and matching CLI/HTTP result identity. | 1 week | Not applicable |
-| M5 | Complete run provenance and documentation | To do | Typed run manifests, validator source evidence, all terminal statuses, terminal-write protection, updated documentation, and complete contract regression tests. | 1 week | Not applicable |
+| M4 | Flexible validation configuration | Done | Registered full-only profiles, schema discovery, arbitrary complete partial configurations, and matching CLI/HTTP result identity. | 1 week | Not applicable |
+| M5 | Complete run provenance and documentation | Done | Typed run manifests, validator source evidence, all terminal statuses, terminal-write protection, updated documentation, and complete contract regression tests. | 1 week | Not applicable |
 
 ```mermaid
 flowchart TD

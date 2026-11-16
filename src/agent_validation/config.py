@@ -328,13 +328,13 @@ def resolve_partial_profile(
         key=lambda error: tuple(str(part) for part in error.absolute_path),
     )
     if errors:
-        error = errors[0]
-        location = ".".join(str(part) for part in error.absolute_path) or "configuration"
-        raise InvalidRequestError(f"Invalid partial configuration at {location}: {error.message}")
+        raise InvalidRequestError(_partial_schema_error(errors[0]))
     try:
         profile = ValidationProfile.model_validate(configuration)
     except ValueError as exc:
-        raise InvalidRequestError(f"Invalid partial configuration: {exc}") from exc
+        raise InvalidRequestError(
+            "Invalid partial configuration: references or structural constraints are invalid"
+        ) from exc
     return ResolvedProfile(
         profile=profile,
         path=base.path,
@@ -343,11 +343,32 @@ def resolve_partial_profile(
     )
 
 
+def _partial_schema_error(error) -> str:
+    if error.validator == "required":
+        missing = next(
+            (name for name in error.validator_value if name not in error.instance),
+            "unknown",
+        )
+        detail = f"missing required field {missing!r}"
+    elif error.validator == "additionalProperties":
+        detail = "unknown fields are not allowed"
+    elif error.validator == "type":
+        expected = error.validator_value
+        detail = f"expected type {expected}"
+    else:
+        detail = f"value does not satisfy the {error.validator} constraint"
+    return f"Invalid partial configuration: {detail}"
+
+
 def load_partial_configuration(path: Path) -> dict[str, Any]:
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        raise InvalidRequestError(f"Cannot load partial configuration {path}: {exc}") from exc
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise InvalidRequestError(f"Cannot read partial configuration {path}") from exc
+    try:
+        raw = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise InvalidRequestError(f"Cannot parse partial configuration {path}") from exc
     if not isinstance(raw, dict):
         raise InvalidRequestError(f"Partial configuration {path} must contain a mapping")
     return raw

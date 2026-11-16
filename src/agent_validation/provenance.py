@@ -6,6 +6,7 @@ import difflib
 import importlib.metadata
 import os
 import subprocess
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -64,31 +65,51 @@ def _validator_repository(source_dir: Path | None) -> Path:
         if os.environ.get("AGENT_VALIDATION_SOURCE_DIR")
         else None
     )
-    candidates = [
-        configured,
-        Path.cwd(),
-        Path(__file__).resolve().parents[2],
-    ]
+    if configured is not None:
+        root = _git_root(configured)
+        if root is None:
+            raise ProvenanceError(
+                f"Cannot establish validator Git provenance from configured source: {configured}"
+            )
+        return root
+
+    module_path = Path(__file__).resolve()
     attempted: list[str] = []
-    for candidate in candidates:
-        if candidate is None:
+    for candidate in (module_path.parents[2], Path.cwd()):
+        attempted.append(str(candidate))
+        root = _git_root(candidate)
+        if root is None:
             continue
         try:
-            completed = subprocess.run(
-                ["git", "-C", str(candidate), "rev-parse", "--show-toplevel"],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-        except (OSError, subprocess.TimeoutExpired):
+            relative_source = module_path.relative_to(root)
+            project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+        except (ValueError, OSError, tomllib.TOMLDecodeError):
             continue
-        attempted.append(str(candidate))
-        if completed.returncode == 0:
-            return Path(completed.stdout.strip()).resolve()
+        if relative_source.parts[:2] != ("src", "agent_validation"):
+            continue
+        if project.get("project", {}).get("name") != "agent-validation":
+            continue
+        return root
     raise ProvenanceError(
-        "Cannot establish validator Git provenance from: " + ", ".join(attempted)
+        "Cannot establish validator Git provenance for the running source from: "
+        + ", ".join(attempted)
     )
+
+
+def _git_root(candidate: Path) -> Path | None:
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(candidate), "rev-parse", "--show-toplevel"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    return Path(completed.stdout.strip()).resolve()
 
 
 def _git(repository: Path, *arguments: str) -> str:

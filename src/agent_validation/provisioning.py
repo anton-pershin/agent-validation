@@ -222,40 +222,48 @@ class RevisionPreparer:
         except OSError as exc:
             raise ProvisioningError(f"Cannot {stage}: {self._redact(str(exc))}") from exc
         tracker = ProcessTreeTracker(process.pid)
-        tracker.start()
-        threads = [
-            threading.Thread(
-                target=capture.read,
-                args=(process.stdout, "stdout"),
-                daemon=True,
-            ),
-            threading.Thread(
-                target=capture.read,
-                args=(process.stderr, "stderr"),
-                daemon=True,
-            ),
-        ]
-        for thread in threads:
-            thread.start()
+        threads: list[threading.Thread] = []
         deadline = time.monotonic() + timeout
         failure: ProvisioningError | None = None
         returncode = status.poll()
-        while returncode is None:
-            if capture.exceeded:
-                failure = ProvisioningError(f"Output limit exceeded while attempting to {stage}")
-                break
-            if time.monotonic() > deadline:
-                failure = ProvisioningError(f"Timed out while attempting to {stage}")
-                break
-            time.sleep(0.01)
+        try:
+            tracker.start()
+            threads = [
+                threading.Thread(
+                    target=capture.read,
+                    args=(process.stdout, "stdout"),
+                    daemon=True,
+                ),
+                threading.Thread(
+                    target=capture.read,
+                    args=(process.stderr, "stderr"),
+                    daemon=True,
+                ),
+            ]
+            for thread in threads:
+                thread.start()
+            while returncode is None:
+                if capture.exceeded:
+                    failure = ProvisioningError(
+                        f"Output limit exceeded while attempting to {stage}"
+                    )
+                    break
+                if time.monotonic() > deadline:
+                    failure = ProvisioningError(f"Timed out while attempting to {stage}")
+                    break
+                time.sleep(0.01)
+                returncode = status.poll()
+        finally:
             returncode = status.poll()
-        cleanup_error = terminate_process_tree(
-            process,
-            resources.process_shutdown_seconds,
-            tracker.stop(),
-            root_completed=returncode is not None,
-        )
-        status.close()
+            cleanup_error = terminate_process_tree(
+                process,
+                resources.process_shutdown_seconds,
+                tracker.stop(),
+                root_completed=returncode is not None,
+            )
+            status.close()
+            for thread in threads:
+                thread.join(timeout=resources.process_shutdown_seconds)
         if cleanup_error:
             message = f"Cannot clean up {stage}: {cleanup_error}"
             failure = (
@@ -263,8 +271,6 @@ class RevisionPreparer:
                 if failure is not None
                 else ProvisioningError(message)
             )
-        for thread in threads:
-            thread.join(timeout=resources.process_shutdown_seconds)
         if failure is None and capture.exceeded:
             failure = ProvisioningError(f"Output limit exceeded while attempting to {stage}")
         stdout, stderr = capture.outputs()
