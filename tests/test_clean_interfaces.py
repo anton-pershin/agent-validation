@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from validation_helpers import configuration_for
 
 from agent_validation.api import create_app
 from agent_validation.application import ServiceSettings
@@ -20,6 +21,10 @@ def test_partial_cli_and_http_against_real_test_solution(
 ) -> None:
     repo, first, _ = git_solution
     output = tmp_path / "cli-result.json"
+    partial_config = tmp_path / "partial-config.json"
+    partial_config.write_text(
+        json.dumps(configuration_for(service_settings)), encoding="utf-8"
+    )
     environment = os.environ.copy()
     environment.update(
         {
@@ -39,6 +44,8 @@ def test_partial_cli_and_http_against_real_test_solution(
             first,
             "--output-json",
             str(output),
+            "--partial-config",
+            str(partial_config),
             "--solution-overrides",
             "--behavior success",
         ],
@@ -59,6 +66,7 @@ def test_partial_cli_and_http_against_real_test_solution(
             "repo": str(repo),
             "commit": first,
             "solution_overrides": "--behavior success",
+            "configuration": configuration_for(service_settings),
         },
     )
     assert response.status_code == 200, response.text
@@ -103,6 +111,10 @@ def test_partial_cli_and_http_against_real_test_solution(
 
 
 def assert_informative_names(result: dict, scope: ValidationScope) -> None:
+    assert result["run_id"]
+    assert Path(result["artifacts_location"]).is_dir()
+    stored_result = Path(result["artifacts_location"]) / "result.json"
+    assert json.loads(stored_result.read_text()) == result
     assert result["validation_scope"] == scope.value
     assert "VM1/unperturbed_overall_success_rate" in result["AC1"]["metrics_status"]
     assert "VM1" not in result["AC1"]["metrics_status"]

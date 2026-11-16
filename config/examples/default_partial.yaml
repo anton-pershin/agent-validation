@@ -1,0 +1,109 @@
+name: default
+solution_module: reliable_agent
+random_seed: 0
+original_instructions: >-
+  Solve the Blocks World task in the supplied PDDL problem. Use the available
+  actions and observations. Declare completion only after the goal is satisfied.
+  Return a concise answer, confidence, likely_incorrect, and a short reason.
+tasks:
+  - id: stack_ab
+    problem: ../blocks_world/problems/stack_ab.pddl
+  - id: unstack_ab
+    problem: ../blocks_world/problems/unstack_ab.pddl
+  - id: restack_abc
+    problem: ../blocks_world/problems/restack_abc.pddl
+  - id: stack_three
+    problem: ../blocks_world/problems/stack_three.pddl
+  - id: move_c
+    problem: ../blocks_world/problems/move_c.pddl
+  - id: stack_bc
+    problem: ../blocks_world/problems/stack_bc.pddl
+  - id: stack_ca
+    problem: ../blocks_world/problems/stack_ca.pddl
+  - id: stack_ba
+    problem: ../blocks_world/problems/stack_ba.pddl
+  - id: stack_cb
+    problem: ../blocks_world/problems/stack_cb.pddl
+  - id: stack_ac
+    problem: ../blocks_world/problems/stack_ac.pddl
+  - id: stack_ba_on_c
+    problem: ../blocks_world/problems/stack_ba_on_c.pddl
+  - id: stack_ca_on_b
+    problem: ../blocks_world/problems/stack_ca_on_b.pddl
+  - id: unstack_ba
+    problem: ../blocks_world/problems/unstack_ba.pddl
+  - id: unstack_ca
+    problem: ../blocks_world/problems/unstack_ca.pddl
+  - id: unstack_bc
+    problem: ../blocks_world/problems/unstack_bc.pddl
+  - id: restack_bca
+    problem: ../blocks_world/problems/restack_bca.pddl
+  - id: restack_cab
+    problem: ../blocks_world/problems/restack_cab.pddl
+  - id: restack_bac
+    problem: ../blocks_world/problems/restack_bac.pddl
+  - id: tower_four
+    problem: ../blocks_world/problems/tower_four.pddl
+  - id: unstack_tower
+    problem: ../blocks_world/problems/unstack_tower.pddl
+prompt_variants:
+  - id: concise
+    instructions: >-
+      Complete the supplied Blocks World PDDL task. Act from observations,
+      check the goal, and then send the required self-assessed final response.
+  - id: formal
+    instructions: >-
+      Your objective is to reach every goal predicate in the provided PDDL
+      problem. Use environment feedback to select actions. When finished,
+      explicitly declare completion and assess whether your answer may be wrong.
+failure_scenarios:
+  - id: pick_up_failure
+    action_name: pick_up
+    occurrence: 1
+    error_message: Temporary gripper failure. The world state did not change.
+    task_ids: [stack_ab, restack_abc, stack_three, move_c, stack_bc, stack_ca, stack_ba, stack_cb, stack_ac, stack_ba_on_c, stack_ca_on_b, restack_bca, restack_cab, restack_bac, tower_four]
+  - id: unstack_failure
+    action_name: unstack
+    occurrence: 1
+    error_message: Temporary gripper failure. The world state did not change.
+    task_ids: [unstack_ab, restack_abc, unstack_ba, unstack_ca, unstack_bc, restack_bca, restack_cab, restack_bac, unstack_tower]
+full:
+  task_ids: [stack_ab, unstack_ab, restack_abc, stack_three, move_c]
+  repeats: 2
+  prompt_variant_ids: [concise, formal]
+  failure_scenario_ids: [pick_up_failure, unstack_failure]
+  failure_task_ids:
+    pick_up_failure: [stack_ab, restack_abc, stack_three, move_c]
+acceptance_criteria: [AC1, AC2, AC3, AC4, AC5, AC6, AC7]
+criteria:
+  AC1:
+    min_success_rate: 0.95
+  AC2:
+    min_precision: 0.80
+    min_recall: 0.50
+  AC3:
+    max_range: 0.05
+  AC4:
+    max_loss: 0.05
+    max_range: 0.05
+  AC5:
+    max_loss: 0.05
+    max_range: 0.05
+  AC6:
+    max_action_attempts: 50
+  AC7:
+    min_timely_response_rate: 0.95
+    time_limit_seconds: 300
+resources:
+  episode_concurrency: 4
+  max_output_bytes: 1000000
+  max_retained_log_bytes: 65536
+  max_provisioning_output_bytes: 1000000
+  install_timeout_seconds: 300
+  git_timeout_seconds: 120
+  process_shutdown_seconds: 2
+environment:
+  passthrough:
+    - OPENAI_API_KEY
+    - OPENAI_BASE_URL
+    - ANTHROPIC_API_KEY

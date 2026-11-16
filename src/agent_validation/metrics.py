@@ -41,7 +41,7 @@ class MetricCalculator:
         self.resolved_profile = resolved_profile
         self.profile = resolved_profile.profile
         self.validation_scope = validation_scope
-        self.scope = self.profile.scope(validation_scope)
+        self.scope = self.profile.scope()
         self.planned = planned
         self.records = records
         self.intermediates: dict[str, object] = {
@@ -466,11 +466,11 @@ class CriterionEvaluator:
     ) -> None:
         self.resolved_profile = resolved_profile
         self.profile = resolved_profile.profile
-        self.scope: ScopeConfig = self.profile.scope(validation_scope)
+        self.scope: ScopeConfig = self.profile.scope()
         self.computations = computations
         self.validation_scope = validation_scope
 
-    def evaluate(self) -> ValidationResult:
+    def evaluate(self, run_id: str = "", artifacts_location: str = "") -> ValidationResult:
         required = self.required_metrics()
         criteria = {}
         for criterion_id in self.profile.acceptance_criteria:
@@ -515,7 +515,9 @@ class CriterionEvaluator:
                 status=criterion_status, metrics_status=metric_statuses
             )
         return ValidationResult(
-            profile=self.profile.name,
+            run_id=run_id,
+            artifacts_location=artifacts_location,
+            profile=self.resolved_profile.base_profile_name,
             validation_scope=self.validation_scope,
             criteria=criteria,
         )

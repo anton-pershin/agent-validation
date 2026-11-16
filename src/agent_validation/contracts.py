@@ -29,6 +29,11 @@ class ValidationRequest(ContractModel):
     solution_overrides: str = Field(default="", max_length=16384)
 
 
+class PartialValidationRequest(ValidationRequest):
+    profile: str | None = None
+    configuration: dict[str, Any]
+
+
 class PlannedEpisode(ContractModel):
     episode_id: str
     task_id: str
@@ -88,12 +93,16 @@ class CriterionEvaluation(ContractModel):
 
 
 class ValidationResult(ContractModel):
+    run_id: str = ""
+    artifacts_location: str = ""
     profile: str
     validation_scope: ValidationScope
     criteria: dict[str, CriterionEvaluation]
 
     def to_response(self) -> dict[str, Any]:
         return {
+            "run_id": self.run_id,
+            "artifacts_location": self.artifacts_location,
             "profile": self.profile,
             "validation_scope": self.validation_scope.value,
             **{
@@ -103,10 +112,29 @@ class ValidationResult(ContractModel):
         }
 
 
-class RunContext(ContractModel):
+class RunManifest(ContractModel):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
     run_id: str
+    artifacts_location: str
+    created_at: str
+    updated_at: str
+    requested_repo: str
     requested_commit: str
     verified_commit: str | None = None
+    solution_overrides: str
+    base_profile: str
+    profile_path: str
+    profile_sha256: str
+    resolved_configuration: dict[str, Any]
+    resolved_configuration_sha256: str
+    validation_scope: ValidationScope
+    random_seed: int
     temporary_root: str
-    status: Literal["running", "completed", "failed"] = "running"
+    implementation: dict[str, Any]
+    environment_variables_forwarded: list[str]
+    solution_dependencies: str = ""
+    cleanup_error: str | None = None
     error_message: str | None = None
+    artifacts: dict[str, str] = Field(default_factory=dict)
+    status: Literal["running", "completed", "failed", "aborted"] = "running"

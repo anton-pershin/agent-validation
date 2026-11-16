@@ -5,7 +5,6 @@ from unittest.mock import Mock
 
 from agent_validation.blocks_world import BlocksWorldEnvironment
 from agent_validation.config import load_profile
-from agent_validation.contracts import ValidationScope
 from agent_validation.episodes import EpisodeExecutor
 from agent_validation.errors import BenchmarkError
 from agent_validation.storage import RunStore
@@ -15,7 +14,7 @@ def test_benchmark_failure_is_infrastructure_not_solution_failure(
     service_settings, monkeypatch, tmp_path: Path
 ) -> None:
     resolved = load_profile("test", service_settings.profile_dir)
-    planned = resolved.plan_episodes(ValidationScope.PARTIAL)[0]
+    planned = resolved.plan_episodes()[0]
 
     def fail_benchmark(path: str):
         raise BenchmarkError("simulated benchmark failure")

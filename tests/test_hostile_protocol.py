@@ -4,28 +4,26 @@ import time
 from pathlib import Path
 
 import pytest
-import yaml
 from test_end_to_end import records_for, run_directories, run_validation
+from validation_helpers import configuration_for
 
 from agent_validation.application import ServiceSettings
 from agent_validation.blocks_world import BlocksWorldEnvironment
 
 
-def one_episode(settings: ServiceSettings, time_limit: float = 0.3) -> ServiceSettings:
-    path = settings.profile_dir / "test.yaml"
-    data = yaml.safe_load(path.read_text())
+def one_episode(settings: ServiceSettings, time_limit: float = 0.3) -> dict:
+    data = configuration_for(settings)
     scope = {
         "task_ids": ["stack_ab"],
         "repeats": 1,
         "prompt_variant_ids": [],
         "failure_scenario_ids": [],
+        "failure_task_ids": {},
     }
     data["full"] = scope
-    data["partial"] = scope
     data["criteria"]["AC7"]["time_limit_seconds"] = time_limit
     data["resources"]["max_output_bytes"] = 1_000_000
-    path.write_text(yaml.safe_dump(data), encoding="utf-8")
-    return settings
+    return data
 
 
 def only_record(settings: ServiceSettings):
@@ -36,13 +34,15 @@ def only_record(settings: ServiceSettings):
 def test_blocked_protocol_io_still_times_out(
     service_settings: ServiceSettings, git_solution, behavior: str
 ) -> None:
-    settings = one_episode(service_settings)
+    configuration = one_episode(service_settings)
     if behavior == "non_reading":
-        problem = settings.profile_dir.parent / "problem.pddl"
+        problem = service_settings.profile_dir.parent / "problem.pddl"
         problem.write_text(problem.read_text() + ";" + "x" * 200_000 + "\n")
     repo, first, _ = git_solution
-    run_validation(settings, repo, first, behavior)
-    record = only_record(settings)
+    run_validation(
+        service_settings, repo, first, behavior, configuration=configuration
+    )
+    record = only_record(service_settings)
     assert record.termination_reason == "timeout"
     assert record.elapsed_seconds < 3
 
@@ -50,7 +50,7 @@ def test_blocked_protocol_io_still_times_out(
 def test_slow_action_is_stopped_at_deadline(
     service_settings: ServiceSettings, git_solution, monkeypatch
 ) -> None:
-    settings = one_episode(service_settings, time_limit=0.1)
+    configuration = one_episode(service_settings, time_limit=0.1)
     original = BlocksWorldEnvironment.execute
 
     def slow_execute(self, action, injected_failure=None):
@@ -59,14 +59,14 @@ def test_slow_action_is_stopped_at_deadline(
 
     monkeypatch.setattr(BlocksWorldEnvironment, "execute", slow_execute)
     repo, first, _ = git_solution
-    run_validation(settings, repo, first)
-    assert only_record(settings).termination_reason == "timeout"
+    run_validation(service_settings, repo, first, configuration=configuration)
+    assert only_record(service_settings).termination_reason == "timeout"
 
 
 def test_scoring_time_is_excluded_from_response_time(
     service_settings: ServiceSettings, git_solution, monkeypatch
 ) -> None:
-    settings = one_episode(service_settings, time_limit=1)
+    configuration = one_episode(service_settings, time_limit=1)
     original = BlocksWorldEnvironment.goal_satisfied
 
     def slow_score(self):
@@ -75,8 +75,8 @@ def test_scoring_time_is_excluded_from_response_time(
 
     monkeypatch.setattr(BlocksWorldEnvironment, "goal_satisfied", slow_score)
     repo, first, _ = git_solution
-    run_validation(settings, repo, first)
-    record = only_record(settings)
+    run_validation(service_settings, repo, first, configuration=configuration)
+    record = only_record(service_settings)
     assert record.success is True
     assert record.elapsed_seconds < 0.25
 
@@ -84,14 +84,13 @@ def test_scoring_time_is_excluded_from_response_time(
 def test_stderr_flood_cannot_be_hidden_by_fast_final_response(
     service_settings: ServiceSettings, git_solution
 ) -> None:
-    settings = one_episode(service_settings)
-    path = settings.profile_dir / "test.yaml"
-    data = yaml.safe_load(path.read_text())
-    data["resources"]["max_output_bytes"] = 1024
-    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    configuration = one_episode(service_settings)
+    configuration["resources"]["max_output_bytes"] = 1024
     repo, first, _ = git_solution
-    run_validation(settings, repo, first, "stderr_flood")
-    record = only_record(settings)
+    run_validation(
+        service_settings, repo, first, "stderr_flood", configuration=configuration
+    )
+    record = only_record(service_settings)
     assert record.termination_reason == "output_limit_exceeded"
     assert record.success is False
 
@@ -103,10 +102,12 @@ def test_stderr_flood_cannot_be_hidden_by_fast_final_response(
 def test_malformed_protocol_values_are_solution_failures(
     service_settings: ServiceSettings, git_solution, behavior: str
 ) -> None:
-    settings = one_episode(service_settings)
+    configuration = one_episode(service_settings)
     repo, first, _ = git_solution
-    run_validation(settings, repo, first, behavior)
-    record = only_record(settings)
+    run_validation(
+        service_settings, repo, first, behavior, configuration=configuration
+    )
+    record = only_record(service_settings)
     assert record.termination_reason == "malformed_output"
     assert record.failure_kind == "solution"
     if behavior in {"empty_batch", "missing_call_id"}:
@@ -116,10 +117,12 @@ def test_malformed_protocol_values_are_solution_failures(
 def test_malformed_incomplete_final_does_not_invalidate_error_flags(
     service_settings: ServiceSettings, git_solution
 ) -> None:
-    settings = one_episode(service_settings)
+    configuration = one_episode(service_settings)
     repo, first, _ = git_solution
-    run_validation(settings, repo, first, "malformed_final")
-    record = only_record(settings)
+    run_validation(
+        service_settings, repo, first, "malformed_final", configuration=configuration
+    )
+    record = only_record(service_settings)
     assert record.final_response_received is False
     assert record.error_flag_invalid is False
     assert record.likely_incorrect is None
@@ -128,10 +131,12 @@ def test_malformed_incomplete_final_does_not_invalidate_error_flags(
 def test_goal_without_completion_declaration_is_unsuccessful(
     service_settings: ServiceSettings, git_solution
 ) -> None:
-    settings = one_episode(service_settings)
+    configuration = one_episode(service_settings)
     repo, first, _ = git_solution
-    run_validation(settings, repo, first, "stop_after_goal")
-    record = only_record(settings)
+    run_validation(
+        service_settings, repo, first, "stop_after_goal", configuration=configuration
+    )
+    record = only_record(service_settings)
     assert record.success is False
     assert record.completed is False
     assert record.final_response_received is True
@@ -163,14 +168,13 @@ def test_home_and_installed_package_state_do_not_leak_between_episodes(
 def test_solution_induced_oversized_observation_is_a_solution_failure(
     service_settings: ServiceSettings, git_solution
 ) -> None:
-    settings = one_episode(service_settings, time_limit=10)
-    path = settings.profile_dir / "test.yaml"
-    data = yaml.safe_load(path.read_text())
-    data["criteria"]["AC6"] = {"max_action_attempts": 5000}
-    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    configuration = one_episode(service_settings, time_limit=10)
+    configuration["criteria"]["AC6"] = {"max_action_attempts": 5000}
     repo, first, _ = git_solution
-    run_validation(settings, repo, first, "amplification")
-    record = only_record(settings)
+    run_validation(
+        service_settings, repo, first, "amplification", configuration=configuration
+    )
+    record = only_record(service_settings)
     assert record.termination_reason == "output_limit_exceeded"
     assert record.failure_kind == "solution"
     assert record.action_attempts == 3000
@@ -180,10 +184,12 @@ def test_solution_induced_oversized_observation_is_a_solution_failure(
 def test_escaped_session_child_is_terminated(
     service_settings: ServiceSettings, git_solution
 ) -> None:
-    settings = one_episode(service_settings, time_limit=0.2)
+    configuration = one_episode(service_settings, time_limit=0.2)
     repo, first, _ = git_solution
-    run_validation(settings, repo, first, "timeout_escape")
-    assert only_record(settings).termination_reason == "timeout"
+    run_validation(
+        service_settings, repo, first, "timeout_escape", configuration=configuration
+    )
+    assert only_record(service_settings).termination_reason == "timeout"
     children = []
     for command_file in Path("/proc").glob("[0-9]*/cmdline"):
         try:
@@ -198,10 +204,12 @@ def test_escaped_session_child_is_terminated(
 def test_escaped_child_is_killed_when_parent_exits_first(
     service_settings: ServiceSettings, git_solution
 ) -> None:
-    settings = one_episode(service_settings)
+    configuration = one_episode(service_settings)
     repo, first, _ = git_solution
-    run_validation(settings, repo, first, "parent_exit_child")
-    assert only_record(settings).termination_reason == "solution_exit"
+    run_validation(
+        service_settings, repo, first, "parent_exit_child", configuration=configuration
+    )
+    assert only_record(service_settings).termination_reason == "solution_exit"
     children = []
     for command_file in Path("/proc").glob("[0-9]*/cmdline"):
         try:

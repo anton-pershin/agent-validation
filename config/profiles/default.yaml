@@ -72,13 +72,6 @@ full:
   repeats: 10
   prompt_variant_ids: [concise, formal]
   failure_scenario_ids: [pick_up_failure, unstack_failure]
-partial:
-  task_ids: [stack_ab, unstack_ab, restack_abc, stack_three, move_c]
-  repeats: 2
-  prompt_variant_ids: [concise, formal]
-  failure_scenario_ids: [pick_up_failure, unstack_failure]
-  failure_task_ids:
-    pick_up_failure: [stack_ab, restack_abc, stack_three, move_c]
 acceptance_criteria: [AC1, AC2, AC3, AC4, AC5, AC6, AC7]
 criteria:
   AC1:

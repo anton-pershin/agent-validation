@@ -4,7 +4,11 @@ from collections import Counter
 from pathlib import Path
 
 from agent_validation.blocks_world import BlocksWorldEnvironment
-from agent_validation.config import load_profile
+from agent_validation.config import (
+    load_partial_configuration,
+    load_profile,
+    resolve_partial_profile,
+)
 from agent_validation.contracts import EpisodeRecord, ValidationScope
 from agent_validation.metrics import CriterionEvaluator, MetricCalculator
 
@@ -112,8 +116,11 @@ def solution(task_id: str) -> list[tuple[str, dict]]:
 
 def test_full_and_partial_population_counts() -> None:
     resolved = load_profile("default", PROFILE_DIR)
-    full = resolved.plan_episodes(ValidationScope.FULL)
-    partial = resolved.plan_episodes(ValidationScope.PARTIAL)
+    full = resolved.plan_episodes()
+    partial = resolve_partial_profile(
+        resolved,
+        load_partial_configuration(ROOT / "config" / "examples" / "default_partial.yaml"),
+    ).plan_episodes()
     assert len(full) == 840
     assert len(partial) == 42
     assert Counter(episode.condition_id for episode in full) == {

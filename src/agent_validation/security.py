@@ -15,7 +15,7 @@ from .errors import InvalidRequestError
 
 _COMMIT_RE = re.compile(r"^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$")
 _SENSITIVE_KEY_RE = re.compile(
-    r"(?:api[-_]?key|(?:access[-_]?|auth[-_]?)?token|password|passwd|secret|authorization)",
+    r"(?:api[-_]?key|(?:access[-_]?|auth[-_]?)?token(?!s|[-_]?(?:count|limit|limits|max|maximum|budget|size|usage))|password|passwd|secret|authorization)",
     re.IGNORECASE,
 )
 _URL_CREDENTIALS_RE = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://)[^\s/@]+@")
@@ -26,7 +26,7 @@ _OPTION_SECRET_RE = re.compile(
 )
 _BEARER_RE = re.compile(r"(Bearer\s+)[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 _ASSIGNMENT_SECRET_RE = re.compile(
-    r"((?:API[-_]?KEY|(?:ACCESS[-_]?|AUTH[-_]?)?TOKEN|PASSWORD|PASSWD|SECRET|AUTHORIZATION)"
+    r"((?:API[-_]?KEY|(?:ACCESS[-_]?|AUTH[-_]?)?TOKEN(?!S|[-_]?(?:COUNT|LIMIT|LIMITS|MAX|MAXIMUM|BUDGET|SIZE|USAGE))|PASSWORD|PASSWD|SECRET|AUTHORIZATION)"
     r"\s*=\s*)([^\s]+)",
     re.IGNORECASE,
 )
@@ -64,6 +64,8 @@ _CREDENTIAL_URL_ENV_NAMES = {
 _STRUCTURAL_STRING_KEYS = {
     "acceptance_status",
     "action",
+    "artifacts_location",
+    "base_profile",
     "action_name",
     "computation_status",
     "condition_id",
@@ -104,6 +106,7 @@ _ENUM_KEY_VALUES = {
     "failure_kind": {"none", "solution", "infrastructure"},
     "name": {"get_action_catalog", "pick_up", "put_down", "stack", "unstack"},
     "status": {
+        "aborted",
         "accepted",
         "valid",
         "invalid",
@@ -232,7 +235,7 @@ def collect_secret_values(request: ValidationRequest, profile: ValidationProfile
     index = 0
     while index < len(arguments):
         argument = arguments[index]
-        if argument.startswith("--") and _SENSITIVE_KEY_RE.search(argument):
+        if argument.startswith("--") and _is_sensitive_option(argument):
             if "=" in argument:
                 secrets.add(argument.split("=", 1)[1])
             elif index + 1 < len(arguments):
@@ -240,6 +243,33 @@ def collect_secret_values(request: ValidationRequest, profile: ValidationProfile
                 index += 1
         index += 1
     return {secret for secret in secrets if secret}
+
+
+def _is_sensitive_option(argument: str) -> bool:
+    name = argument.split("=", 1)[0].lstrip("-")
+    parts = [part for part in re.split(r"[-_]", name.lower()) if part]
+    if "tokens" in parts:
+        return False
+    for index, part in enumerate(parts):
+        if part in {"password", "passwd", "secret", "authorization"}:
+            return True
+        if part == "key" and index > 0 and parts[index - 1] == "api":
+            return True
+        if part == "token":
+            previous = parts[index - 1] if index else ""
+            following = parts[index + 1] if index + 1 < len(parts) else ""
+            if previous not in {"input", "output", "max", "maximum"} and following not in {
+                "budget",
+                "count",
+                "limit",
+                "limits",
+                "max",
+                "maximum",
+                "size",
+                "usage",
+            }:
+                return True
+    return False
 
 
 def provisioning_environment() -> dict[str, str]:

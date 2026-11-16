@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
-import yaml
+from validation_helpers import configuration_for
 
 from agent_validation.application import ServiceSettings, ValidationApplication
 from agent_validation.config import load_profile
@@ -53,7 +53,11 @@ def test_failed_clone_preserves_failure_evidence_and_cleans_temporary_root(
         solution_overrides="",
     )
     with pytest.raises(ProvisioningError, match="clone repository"):
-        ValidationApplication(service_settings).validate(request, ValidationScope.PARTIAL)
+        ValidationApplication(service_settings).validate(
+            request,
+            ValidationScope.PARTIAL,
+            configuration=configuration_for(service_settings),
+        )
     run_directory = next(service_settings.artifact_root.iterdir())
     configuration = json.loads((run_directory / "run.json").read_text())
     assert configuration["status"] == "failed"
@@ -81,7 +85,9 @@ def test_install_failure_preserves_verified_commit_and_provisioning_evidence(
     ).stdout.strip()
     with pytest.raises(ProvisioningError, match="install solution dependencies"):
         ValidationApplication(service_settings).validate(
-            ValidationRequest(repo=str(repo), commit=broken), ValidationScope.PARTIAL
+            ValidationRequest(repo=str(repo), commit=broken),
+            ValidationScope.PARTIAL,
+            configuration=configuration_for(service_settings),
         )
     run_directory = next(service_settings.artifact_root.iterdir())
     configuration = json.loads((run_directory / "run.json").read_text())
@@ -242,15 +248,14 @@ def test_episode_cleanup_failure_is_recorded_and_other_removals_continue(
 def test_episode_cleanup_failure_preserves_episode_evidence(
     service_settings: ServiceSettings, git_solution, monkeypatch
 ) -> None:
-    profile_path = service_settings.profile_dir / "test.yaml"
-    data = yaml.safe_load(profile_path.read_text())
-    data["partial"] = {
+    configuration = configuration_for(service_settings)
+    configuration["full"] = {
         "task_ids": ["stack_ab"],
         "repeats": 1,
         "prompt_variant_ids": [],
         "failure_scenario_ids": [],
+        "failure_task_ids": {},
     }
-    profile_path.write_text(yaml.safe_dump(data), encoding="utf-8")
     repo, commit, _ = git_solution
     original_rmtree = shutil.rmtree
     failed = False
@@ -270,7 +275,9 @@ def test_episode_cleanup_failure_preserves_episode_evidence(
         repo=str(repo), commit=commit, solution_overrides="--behavior success"
     )
     with pytest.raises(ProvisioningError, match="simulated episode cleanup failure"):
-        ValidationApplication(service_settings).validate(request, ValidationScope.PARTIAL)
+        ValidationApplication(service_settings).validate(
+            request, ValidationScope.PARTIAL, configuration=configuration
+        )
 
     run_directory = next(service_settings.artifact_root.iterdir())
     configuration = json.loads((run_directory / "run.json").read_text())

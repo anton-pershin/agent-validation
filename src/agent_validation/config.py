@@ -6,13 +6,15 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import yaml
+from jsonschema import Draft202012Validator
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .contracts import ConditionType, PlannedEpisode, ValidationScope
-from .errors import InvalidRequestError, ProfileError
+from .errors import InvalidRequestError, ProfileError, ProfileNotFoundError
 
 
 class ProfileModel(BaseModel):
@@ -108,7 +110,6 @@ class ValidationProfile(ProfileModel):
     prompt_variants: list[PromptVariantConfig] = Field(default_factory=list)
     failure_scenarios: list[FailureScenarioConfig] = Field(default_factory=list)
     full: ScopeConfig
-    partial: ScopeConfig
     acceptance_criteria: list[str] = Field(
         default=["AC1", "AC2", "AC3", "AC4", "AC5", "AC6", "AC7"]
     )
@@ -128,7 +129,7 @@ class ValidationProfile(ProfileModel):
         for scenario in self.failure_scenarios:
             _unique_ids(scenario.task_ids, f"task reference in scenario {scenario.id}")
             _require_references(scenario.task_ids, task_ids, f"scenario {scenario.id}")
-        for scope_name, scope in (("full", self.full), ("partial", self.partial)):
+        for scope_name, scope in (("full", self.full),):
             _unique_ids(scope.task_ids, f"task reference in {scope_name} scope")
             _unique_ids(scope.prompt_variant_ids, f"prompt reference in {scope_name} scope")
             _unique_ids(scope.failure_scenario_ids, f"scenario reference in {scope_name} scope")
@@ -155,8 +156,8 @@ class ValidationProfile(ProfileModel):
             raise ValueError("Acceptance criteria must not contain duplicates")
         return self
 
-    def scope(self, validation_scope: ValidationScope) -> ScopeConfig:
-        return self.full if validation_scope == ValidationScope.FULL else self.partial
+    def scope(self) -> ScopeConfig:
+        return self.full
 
     def selected_variants(self, scope: ScopeConfig) -> list[PromptVariantConfig]:
         by_id = {variant.id: variant for variant in self.prompt_variants}
@@ -173,9 +174,21 @@ class ResolvedProfile(BaseModel):
     profile: ValidationProfile
     path: Path
     sha256: str
+    base_name: str | None = None
 
-    def plan_episodes(self, validation_scope: ValidationScope) -> list[PlannedEpisode]:
-        scope = self.profile.scope(validation_scope)
+    @property
+    def base_profile_name(self) -> str:
+        return self.base_name or self.profile.name
+
+    @property
+    def effective_sha256(self) -> str:
+        return hashlib.sha256(profile_for_evidence(self).encode("utf-8")).hexdigest()
+
+    def plan_episodes(
+        self, validation_scope: ValidationScope | None = None
+    ) -> list[PlannedEpisode]:
+        del validation_scope
+        scope = self.profile.scope()
         tasks = {task.id: task for task in self.profile.tasks}
         variants = self.profile.selected_variants(scope)
         scenarios = self.profile.selected_scenarios(scope)
@@ -259,7 +272,7 @@ def load_profile(name: str, profile_dir: Path) -> ResolvedProfile:
             raise ProfileError(f"Profile {name} must contain a YAML mapping")
         profile = ValidationProfile.model_validate(raw)
     except FileNotFoundError as exc:
-        raise ProfileError(f"Validation profile does not exist: {name}") from exc
+        raise ProfileNotFoundError(f"Validation profile does not exist: {name}") from exc
     except (OSError, yaml.YAMLError, ValueError) as exc:
         raise ProfileError(f"Cannot load validation profile {name}: {exc}") from exc
     if profile.name != name:
@@ -268,7 +281,76 @@ def load_profile(name: str, profile_dir: Path) -> ResolvedProfile:
         profile=profile,
         path=path,
         sha256=hashlib.sha256(raw_bytes).hexdigest(),
+        base_name=name,
     )
+
+
+def normalized_configuration(profile: ValidationProfile) -> dict[str, Any]:
+    """Return every effective profile value, including fields with defaults."""
+    return profile.model_dump(mode="json")
+
+
+def complete_configuration_schema() -> dict[str, Any]:
+    """Return a JSON Schema that requires every field in a submitted copy."""
+    schema = ValidationProfile.model_json_schema()
+
+    def require_all(node: Any) -> None:
+        if isinstance(node, dict):
+            properties = node.get("properties")
+            if isinstance(properties, dict):
+                node["required"] = list(properties)
+            for child in node.values():
+                require_all(child)
+        elif isinstance(node, list):
+            for child in node:
+                require_all(child)
+
+    require_all(schema)
+    return schema
+
+
+def configuration_response(resolved: ResolvedProfile) -> dict[str, Any]:
+    return {
+        "profile": resolved.base_profile_name,
+        "schema": complete_configuration_schema(),
+        "configuration": normalized_configuration(resolved.profile),
+    }
+
+
+def resolve_partial_profile(
+    base: ResolvedProfile, configuration: dict[str, Any]
+) -> ResolvedProfile:
+    """Validate a complete modified copy without changing its registered base."""
+    if not isinstance(configuration, dict):
+        raise InvalidRequestError("Partial configuration must be a mapping")
+    errors = sorted(
+        Draft202012Validator(complete_configuration_schema()).iter_errors(configuration),
+        key=lambda error: tuple(str(part) for part in error.absolute_path),
+    )
+    if errors:
+        error = errors[0]
+        location = ".".join(str(part) for part in error.absolute_path) or "configuration"
+        raise InvalidRequestError(f"Invalid partial configuration at {location}: {error.message}")
+    try:
+        profile = ValidationProfile.model_validate(configuration)
+    except ValueError as exc:
+        raise InvalidRequestError(f"Invalid partial configuration: {exc}") from exc
+    return ResolvedProfile(
+        profile=profile,
+        path=base.path,
+        sha256=base.sha256,
+        base_name=base.base_profile_name,
+    )
+
+
+def load_partial_configuration(path: Path) -> dict[str, Any]:
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise InvalidRequestError(f"Cannot load partial configuration {path}: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise InvalidRequestError(f"Partial configuration {path} must contain a mapping")
+    return raw
 
 
 def default_profile_dir() -> Path:

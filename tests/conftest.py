@@ -37,12 +37,6 @@ def profile_data(problem_path: str = "../problem.pddl") -> dict:
             "prompt_variant_ids": ["concise"],
             "failure_scenario_ids": ["pick_up_failure"],
         },
-        "partial": {
-            "task_ids": ["stack_ab"],
-            "repeats": 2,
-            "prompt_variant_ids": ["concise"],
-            "failure_scenario_ids": ["pick_up_failure"],
-        },
         "acceptance_criteria": ["AC1", "AC2", "AC3", "AC4", "AC5", "AC6", "AC7"],
         "criteria": {"AC7": {"time_limit_seconds": 5, "min_timely_response_rate": 0.95}},
         "resources": {
