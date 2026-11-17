@@ -2,12 +2,12 @@
 
 ### 1. Requirement analysis
 
-- **R1. Necessary pick-up exposure.** Remove `unstack_ab`, `unstack_ba`, `unstack_bc`, `unstack_ca`, and `unstack_tower` from the full `pick_up_failure` population. These tasks have valid solutions that do not call `pick_up`. Keep the partial population unchanged. The full `pick_up_failure` population must contain 15 tasks, and the common full task set for `pick_up_failure` and `unstack_failure` must be `restack_abc`, `restack_bca`, `restack_cab`, and `restack_bac`.
-- **R2. Updated full population.** Keep 20 benchmark tasks and 10 repeats. The full profile must plan 840 episodes: 200 unperturbed, 200 concise, 200 formal, 150 `pick_up_failure`, and 90 `unstack_failure`. The partial profile must still plan 42 episodes.
+- **R1. Necessary pick-up exposure.** Remove `unstack_ab`, `unstack_ba`, `unstack_bc`, `unstack_ca`, and `unstack_tower` from the full `pick_up_failure` population. These tasks have valid solutions that do not call `pick_up`. Keep the partial population unchanged. The full `pick_up_failure` population must contain 15 tasks, and the common full task set for `pick_up_failure` and `unstack_failure` must be `restack_abc`, `restack_bca`, `restack_cab`, and `restack_bac`. **Supersession:** [spec 12](12-flexible-validation-contract-general-spec.md) removes the fixed partial population referenced here; the full eligibility change remains in force.
+- **R2. Updated full population.** Keep 20 benchmark tasks and 10 repeats. The full profile must plan 840 episodes: 200 unperturbed, 200 concise, 200 formal, 150 `pick_up_failure`, and 90 `unstack_failure`. The partial profile must still plan 42 episodes. **Supersession:** the 840-episode full requirement remains; spec 12 preserves the 42-episode population only as an unregistered complete-configuration example.
 - **R3. Overall scenario success.** Compute VM7 and VM8 over all planned episodes in their comparison populations. Count successful episodes without fault exposure as successful and unsuccessful episodes without fault exposure as unsuccessful. Missing fault exposure alone must not cause `failed_to_compute`. Keep the existing VM7 and VM8 formulas, metric keys, and AC5 thresholds.
 - **R4. Exposure evidence.** For every selected failure scenario, retain its overall and per-task fault-exposure rates: exposed planned episodes divided by all planned episodes.
 - **R5. Exposed-recovery evidence.** For every selected failure scenario, retain per-task exposed-recovery success rates: successful exposed episodes divided by exposed episodes. Compute the overall exposed-recovery rate as the arithmetic mean of per-task rates for tasks with at least one exposed episode. Use `null` for a task with no exposed episodes and for the overall rate when no task has exposure. Never count a non-exposed episode as recovery evidence.
-- **R6. Documentation and compatibility.** Keep the result schema unchanged and store the new evidence in `intermediates.json`. Document the population, overall-success semantics, exposure rate, and exposed-recovery rate.
+- **R6. Documentation and compatibility.** Keep the result schema unchanged and store the new evidence in `intermediates.json`. Document the population, overall-success semantics, exposure rate, and exposed-recovery rate. **Supersession:** spec 12 later adds `run_id` and `artifacts_location` to the common result and replaces fixed-partial documentation; the evidence and metric semantics above remain unchanged.
 
 Expected behavior variants:
 
@@ -15,14 +15,14 @@ Expected behavior variants:
 - **B2. Unsuccessful non-exposed episode.** It counts as unsuccessful in VM7 and VM8 and contributes no exposure or recovery success.
 - **B3. Exposed episode.** It contributes to the exposure numerator and, when successful, to the recovery numerator.
 - **B4. No exposure.** VM7 and VM8 remain computable; exposure is zero and exposed recovery is `null`.
-- **B5. Full planning.** The full profile plans 840 episodes with the corrected eligible task sets. The partial profile remains unchanged.
+- **B5. Full planning.** The full profile plans 840 episodes with the corrected eligible task sets. The partial profile remains unchanged. **Supersession:** spec 12 removes the fixed partial profile; the full-planning behavior remains unchanged.
 
 ### 2. Tests
 
-- **T1. Exact populations and eligibility.** Assert 840 full episodes and 42 partial episodes, exact condition counts, the 15-task pick-up population, and the four-task common scenario population. Covers R1–R2 and B5.
+- **T1. Exact populations and eligibility.** Assert 840 full episodes and 42 partial episodes, exact condition counts, the 15-task pick-up population, and the four-task common scenario population. Covers R1–R2 and B5. **Supersession:** spec 12 retains the full assertions but applies the 42-episode assertion to the unregistered example submitted as a complete partial configuration.
 - **T2. Non-exposed outcome semantics.** Use successful and unsuccessful non-exposed records and assert that VM7 and VM8 retain their independent overall-success values and produce no exposure-related error. Covers B1–B2 and R3.
 - **T3. Exposure and recovery evidence.** Use mixed exposed and non-exposed records and assert exact overall and per-task exposure and exposed-recovery rates. Include all-false exposure and assert zero exposure and `null` recovery without a metric error. Covers B1–B4 and R4–R5.
-- **T4. Regression and documentation.** Run the complete suite, Ruff, and whitespace checks. Confirm that existing VM7 and VM8 values, result schemas, missing-record handling, and infrastructure-failure handling remain unchanged except for the removal of exposure-only failures. Update the validation spec and README. Covers R3–R6.
+- **T4. Regression and documentation.** Run the complete suite, Ruff, and whitespace checks. Confirm that existing VM7 and VM8 values, result schemas, missing-record handling, and infrastructure-failure handling remain unchanged except for the removal of exposure-only failures. Update the validation spec and README. Covers R3–R6. **Supersession:** spec 12's run-aware result fields and complete-partial documentation supersede the fixed-schema and fixed-partial assumptions; the VM7/VM8 regression expectations remain.
 
 ### 3. Implementation plan
 
@@ -74,4 +74,4 @@ flowchart TD
   class Overall,Coverage,Recovery modified
 ```
 
-No result-schema, criterion-threshold, protocol, provisioning, or solution-interface change is required.
+No result-schema, criterion-threshold, protocol, provisioning, or solution-interface change is required. **Supersession:** spec 12 subsequently adds run identity to the result schema and replaces fixed partial configuration; it does not change the metric, threshold, protocol, provisioning, or solution semantics described here.

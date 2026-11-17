@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any
 
@@ -15,6 +16,7 @@ from .contracts import EpisodeRecord, PlannedEpisode
 from .errors import (
     BenchmarkError,
     ProvisioningError,
+    RunAbortedError,
     SolutionExitedError,
     SolutionOutputLimitError,
     SolutionProtocolError,
@@ -36,6 +38,16 @@ class EpisodeExecutor:
         self.resolved_profile = resolved_profile
         self.revision = revision
         self.store = store
+        self._cancel_event = threading.Event()
+        self._processes: dict[str, SolutionProcess] = {}
+        self._process_lock = threading.Lock()
+
+    def cancel(self) -> None:
+        self._cancel_event.set()
+        with self._process_lock:
+            processes = list(self._processes.values())
+        for process in processes:
+            process.close()
 
     def execute(self, planned: PlannedEpisode) -> EpisodeRecord:
         action_attempts = 0
@@ -56,6 +68,7 @@ class EpisodeExecutor:
         failure_kind = "infrastructure"
         error_message: str | None = None
         try:
+            self._check_cancelled()
             environment = BlocksWorldEnvironment.from_pddl(planned.problem_path)
             self.revision.reset_checkout()
             workspace = self.revision.episode_workspace(planned.episode_id)
@@ -68,7 +81,11 @@ class EpisodeExecutor:
                 max_retained_log_bytes=resources.max_retained_log_bytes,
                 shutdown_seconds=resources.process_shutdown_seconds,
             )
+            with self._process_lock:
+                self._processes[planned.episode_id] = process
+            self._check_cancelled()
             process.start()
+            self._check_cancelled()
             task_message = {
                 "protocol_version": 1,
                 "type": "task",
@@ -85,6 +102,7 @@ class EpisodeExecutor:
             process.send(task_message, deadline)
             transcript.append({"direction": "service_to_solution", "message": task_message})
             while True:
+                self._check_cancelled()
                 message = process.receive(deadline)
                 received_at = process.last_received_at or time.monotonic()
                 transcript.append({"direction": "solution_to_service", "message": message})
@@ -191,6 +209,10 @@ class EpisodeExecutor:
                     failure_kind = "none"
                     break
                 raise SolutionProtocolError(f"Unknown solution message type: {message['type']}")
+        except RunAbortedError as exc:
+            termination_reason = "aborted"
+            failure_kind = "infrastructure"
+            error_message = str(exc)
         except SolutionTimeoutError as exc:
             termination_reason = "timeout"
             failure_kind = "solution"
@@ -234,10 +256,17 @@ class EpisodeExecutor:
                         self.store.write_raw_protocol_error(
                             planned.episode_id, process.last_raw_output
                         )
+                    with self._process_lock:
+                        self._processes.pop(planned.episode_id, None)
                 self.store.write_protocol(planned.episode_id, transcript)
             finally:
                 self.revision.cleanup_episode(planned.episode_id)
 
+        if self._cancel_event.is_set():
+            success = False
+            termination_reason = "aborted"
+            failure_kind = "infrastructure"
+            error_message = "Validation was cooperatively aborted"
         infrastructure_failure = failure_kind == "infrastructure"
         record = EpisodeRecord(
             episode_id=planned.episode_id,
@@ -277,6 +306,10 @@ class EpisodeExecutor:
             return float(value)
         except (OverflowError, ValueError, TypeError):
             return None
+
+    def _check_cancelled(self) -> None:
+        if self._cancel_event.is_set():
+            raise RunAbortedError("Validation was cooperatively aborted")
 
     @staticmethod
     def _check_deadline(deadline: float, observed_at: float | None = None) -> None:

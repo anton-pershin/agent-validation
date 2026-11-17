@@ -7,10 +7,15 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-import yaml
+from validation_helpers import configuration_for
 
 from agent_validation.application import ServiceSettings, ValidationApplication
-from agent_validation.config import ValidationProfile, load_profile
+from agent_validation.config import (
+    ValidationProfile,
+    load_partial_configuration,
+    load_profile,
+    resolve_partial_profile,
+)
 from agent_validation.contracts import (
     EpisodeRecord,
     PlannedEpisode,
@@ -27,13 +32,17 @@ def run_validation(
     repo: Path,
     commit: str,
     behavior: str = "success",
+    configuration: dict | None = None,
 ) -> dict:
     request = ValidationRequest(
         repo=str(repo),
         commit=commit,
         solution_overrides=f"--behavior {behavior}",
     )
-    return ValidationApplication(settings).validate(request, ValidationScope.PARTIAL)
+    effective = configuration if configuration is not None else configuration_for(settings)
+    return ValidationApplication(settings).validate(
+        request, ValidationScope.PARTIAL, configuration=effective
+    )
 
 
 def run_directories(settings: ServiceSettings) -> list[Path]:
@@ -88,7 +97,11 @@ def test_repeat_placeholder_reaches_each_episode_solution(
         commit=first,
         solution_overrides="--behavior echo_seed --seed {repeat}",
     )
-    ValidationApplication(service_settings).validate(request, ValidationScope.PARTIAL)
+    ValidationApplication(service_settings).validate(
+        request,
+        ValidationScope.PARTIAL,
+        configuration=configuration_for(service_settings),
+    )
     run_directory = run_directories(service_settings)[0]
     records = records_for(run_directory)
     assert len(records) == 6
@@ -118,6 +131,8 @@ def test_exact_commit_evidence_recomputation_and_cleanup(
     run_configuration = json.loads((first_run / "run.json").read_text())
     assert run_configuration["verified_commit"] == first
     assert run_configuration["status"] == "completed"
+    assert run_configuration["artifacts"]["episode_records"] == "episodes.jsonl"
+    assert run_configuration["artifacts"]["episode_artifacts"] == "episodes"
     assert "typing_extensions" in run_configuration["solution_dependencies"]
     assert (first_run / "provisioning.json").exists()
     assert not Path(run_configuration["temporary_root"]).exists()
@@ -144,11 +159,16 @@ def test_exact_commit_evidence_recomputation_and_cleanup(
         PlannedEpisode.model_validate(item)
         for item in json.loads((first_run / "planned_episodes.json").read_text())
     ]
-    resolved = load_profile("test", service_settings.profile_dir)
+    resolved = resolve_partial_profile(
+        load_profile("test", service_settings.profile_dir),
+        run_configuration["resolved_configuration"],
+    )
     recomputed = MetricCalculator(resolved, ValidationScope.PARTIAL, planned, first_records)
     recomputed_result = CriterionEvaluator(
         resolved, ValidationScope.PARTIAL, recomputed.compute()
-    ).evaluate()
+    ).evaluate(
+        run_id=result["run_id"], artifacts_location=result["artifacts_location"]
+    )
     assert recomputed_result.to_response() == result
 
     run_validation(service_settings, repo, second)
@@ -195,10 +215,8 @@ def test_overlapping_validations_do_not_mix_revisions_or_evidence(
 def test_concurrent_episodes_keep_state_isolated(
     service_settings: ServiceSettings, git_solution, monkeypatch
 ) -> None:
-    profile_path = service_settings.profile_dir / "test.yaml"
-    data = yaml.safe_load(profile_path.read_text())
-    data["resources"]["episode_concurrency"] = 2
-    profile_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    configuration = configuration_for(service_settings)
+    configuration["resources"]["episode_concurrency"] = 2
     cleaned, peaks = track_episode_cleanup(monkeypatch)
     original_start = SolutionProcess.start
     active_pair = threading.Barrier(2)
@@ -209,7 +227,9 @@ def test_concurrent_episodes_keep_state_isolated(
 
     monkeypatch.setattr(SolutionProcess, "start", wait_for_active_pair)
     repo, first, _ = git_solution
-    run_validation(service_settings, repo, first, "mutate_state")
+    run_validation(
+        service_settings, repo, first, "mutate_state", configuration=configuration
+    )
     records = records_for(run_directories(service_settings)[0])
     assert len(records) == 6
     assert all(record.success is True for record in records)
@@ -218,21 +238,19 @@ def test_concurrent_episodes_keep_state_isolated(
     assert all(count == 2 for count in peaks.values())
 
 
-def single_episode_settings(settings: ServiceSettings, **criteria_updates) -> ServiceSettings:
-    profile_path = settings.profile_dir / "test.yaml"
-    data = yaml.safe_load(profile_path.read_text())
+def single_episode_configuration(settings: ServiceSettings, **criteria_updates) -> dict:
+    data = configuration_for(settings)
     scope = {
         "task_ids": ["stack_ab"],
         "repeats": 1,
         "prompt_variant_ids": [],
         "failure_scenario_ids": [],
+        "failure_task_ids": {},
     }
     data["full"] = scope
-    data["partial"] = scope
     for criterion, values in criteria_updates.items():
         data["criteria"].setdefault(criterion, {}).update(values)
-    profile_path.write_text(yaml.safe_dump(data), encoding="utf-8")
-    return settings
+    return data
 
 
 @pytest.mark.parametrize(
@@ -255,11 +273,13 @@ def test_solution_failure_records(
     success: bool,
     final_received: bool,
 ) -> None:
-    settings = single_episode_settings(service_settings)
+    configuration = single_episode_configuration(service_settings)
     cleaned, _ = track_episode_cleanup(monkeypatch)
     repo, first, _ = git_solution
-    result = run_validation(settings, repo, first, behavior)
-    record = records_for(run_directories(settings)[0])[0]
+    result = run_validation(
+        service_settings, repo, first, behavior, configuration=configuration
+    )
+    record = records_for(run_directories(service_settings)[0])[0]
     assert cleaned == [record.episode_id]
     assert record.termination_reason == termination
     assert record.success is success
@@ -277,10 +297,12 @@ def test_solution_failure_records(
 def test_invalid_self_assessment_is_retained_and_fails_error_awareness(
     service_settings: ServiceSettings, git_solution, behavior: str
 ) -> None:
-    settings = single_episode_settings(service_settings)
+    configuration = single_episode_configuration(service_settings)
     repo, first, _ = git_solution
-    result = run_validation(settings, repo, first, behavior)
-    record = records_for(run_directories(settings)[0])[0]
+    result = run_validation(
+        service_settings, repo, first, behavior, configuration=configuration
+    )
+    record = records_for(run_directories(service_settings)[0])[0]
     assert record.success is True
     assert record.final_response_received is True
     assert record.likely_incorrect is None
@@ -291,11 +313,15 @@ def test_invalid_self_assessment_is_retained_and_fails_error_awareness(
 def test_timeout_kills_solution_process_group(
     service_settings: ServiceSettings, git_solution, monkeypatch
 ) -> None:
-    settings = single_episode_settings(service_settings, AC7={"time_limit_seconds": 0.2})
+    configuration = single_episode_configuration(
+        service_settings, AC7={"time_limit_seconds": 0.2}
+    )
     cleaned, _ = track_episode_cleanup(monkeypatch)
     repo, first, _ = git_solution
-    result = run_validation(settings, repo, first, "timeout")
-    record = records_for(run_directories(settings)[0])[0]
+    result = run_validation(
+        service_settings, repo, first, "timeout", configuration=configuration
+    )
+    record = records_for(run_directories(service_settings)[0])[0]
     assert cleaned == [record.episode_id]
     assert record.termination_reason == "timeout"
     assert record.elapsed_seconds < 3
@@ -312,14 +338,13 @@ def test_timeout_kills_solution_process_group(
 
 
 def test_output_limit_is_enforced(service_settings: ServiceSettings, git_solution) -> None:
-    settings = single_episode_settings(service_settings)
-    profile_path = settings.profile_dir / "test.yaml"
-    data = yaml.safe_load(profile_path.read_text())
-    data["resources"]["max_output_bytes"] = 1024
-    profile_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    configuration = single_episode_configuration(service_settings)
+    configuration["resources"]["max_output_bytes"] = 1024
     repo, first, _ = git_solution
-    run_validation(settings, repo, first, "output_flood")
-    record = records_for(run_directories(settings)[0])[0]
+    run_validation(
+        service_settings, repo, first, "output_flood", configuration=configuration
+    )
+    record = records_for(run_directories(service_settings)[0])[0]
     assert record.termination_reason == "output_limit_exceeded"
     assert record.success is False
 
@@ -327,7 +352,7 @@ def test_output_limit_is_enforced(service_settings: ServiceSettings, git_solutio
 def test_credentials_are_redacted_from_evidence(
     service_settings: ServiceSettings, git_solution, monkeypatch
 ) -> None:
-    settings = single_episode_settings(service_settings)
+    configuration = single_episode_configuration(service_settings)
     repo, first, _ = git_solution
     monkeypatch.setenv("OPENAI_API_KEY", "provider-secret")
     request = ValidationRequest(
@@ -335,8 +360,10 @@ def test_credentials_are_redacted_from_evidence(
         commit=first,
         solution_overrides="--behavior log_secret --api-key override-secret",
     )
-    ValidationApplication(settings).validate(request, ValidationScope.PARTIAL)
-    run_directory = run_directories(settings)[0]
+    ValidationApplication(service_settings).validate(
+        request, ValidationScope.PARTIAL, configuration=configuration
+    )
+    run_directory = run_directories(service_settings)[0]
     for path in run_directory.rglob("*"):
         if not path.is_file():
             continue
@@ -348,10 +375,10 @@ def test_credentials_are_redacted_from_evidence(
 def test_short_and_proxy_secrets_are_redacted_from_all_evidence(
     service_settings: ServiceSettings, git_solution, monkeypatch
 ) -> None:
-    settings = single_episode_settings(service_settings)
+    configuration = single_episode_configuration(service_settings)
     repo, first, _ = git_solution
     monkeypatch.setenv("OPENAI_API_KEY", "Z9!")
-    monkeypatch.setenv("HTTPS_PROXY", "https://user:px@proxy.invalid/")
+    monkeypatch.setenv("HTTPS_PROXY", "https://user:pX!@proxy.invalid/")
     monkeypatch.setenv("NO_PROXY", "*")
     monkeypatch.setenv("no_proxy", "*")
     request = ValidationRequest(
@@ -359,14 +386,16 @@ def test_short_and_proxy_secrets_are_redacted_from_all_evidence(
         commit=first,
         solution_overrides="--behavior log_secret --api-key s3",
     )
-    ValidationApplication(settings).validate(request, ValidationScope.PARTIAL)
-    run_directory = run_directories(settings)[0]
+    ValidationApplication(service_settings).validate(
+        request, ValidationScope.PARTIAL, configuration=configuration
+    )
+    run_directory = run_directories(service_settings)[0]
     for path in run_directory.rglob("*"):
         if not path.is_file():
             continue
         content = path.read_text(encoding="utf-8", errors="replace")
         assert "Z9!" not in content, path
-        assert "px" not in content, path
+        assert "pX!" not in content, path
         assert "s3" not in content, path
 
 
@@ -378,7 +407,11 @@ def test_one_character_secret_does_not_corrupt_typed_evidence(
     request = ValidationRequest(
         repo=str(repo), commit=first, solution_overrides="--behavior log_secret"
     )
-    ValidationApplication(service_settings).validate(request, ValidationScope.PARTIAL)
+    ValidationApplication(service_settings).validate(
+        request,
+        ValidationScope.PARTIAL,
+        configuration=configuration_for(service_settings),
+    )
     run_directory = run_directories(service_settings)[0]
     records = records_for(run_directory)
     assert len(records) == 6
@@ -396,13 +429,13 @@ def test_one_character_secret_does_not_corrupt_typed_evidence(
     configuration = json.loads((run_directory / "run.json").read_text())
     assert configuration["validation_scope"] == "partial"
     assert configuration["status"] == "completed"
-    ValidationProfile.model_validate(configuration["profile"])
+    ValidationProfile.model_validate(configuration["resolved_configuration"])
 
 
 def test_overrides_are_not_executed_through_a_shell(
     service_settings: ServiceSettings, git_solution, tmp_path: Path
 ) -> None:
-    settings = single_episode_settings(service_settings)
+    configuration = single_episode_configuration(service_settings)
     repo, first, _ = git_solution
     marker = tmp_path / "shell-was-used"
     request = ValidationRequest(
@@ -410,7 +443,9 @@ def test_overrides_are_not_executed_through_a_shell(
         commit=first,
         solution_overrides=f"--behavior success; touch {marker}",
     )
-    ValidationApplication(settings).validate(request, ValidationScope.PARTIAL)
+    ValidationApplication(service_settings).validate(
+        request, ValidationScope.PARTIAL, configuration=configuration
+    )
     assert not marker.exists()
 
 
@@ -444,7 +479,14 @@ def test_default_partial_population(git_solution, tmp_path: Path) -> None:
         temporary_root=tmp_path / "temporary",
         active_profile="default",
     )
-    result = run_validation(settings, repo, first)
+    result = run_validation(
+        settings,
+        repo,
+        first,
+        configuration=load_partial_configuration(
+            settings.profile_dir.parent / "examples" / "default_partial.yaml"
+        ),
+    )
     records = records_for(run_directories(settings)[0])
     assert result["validation_scope"] == "partial"
     assert len(records) == 42
@@ -468,7 +510,14 @@ def test_blocksworld_hard_partial_service(git_solution, tmp_path: Path) -> None:
         temporary_root=tmp_path / "temporary",
         active_profile="blocksworld_hard",
     )
-    result = run_validation(settings, repo, first)
+    result = run_validation(
+        settings,
+        repo,
+        first,
+        configuration=load_partial_configuration(
+            settings.profile_dir.parent / "examples" / "blocksworld_hard_partial.yaml"
+        ),
+    )
     records = records_for(run_directories(settings)[0])
     assert result["profile"] == "blocksworld_hard"
     assert result["validation_scope"] == "partial"

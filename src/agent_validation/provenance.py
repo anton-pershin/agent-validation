@@ -1,0 +1,130 @@
+"""Exact validator source and runtime provenance collection."""
+
+from __future__ import annotations
+
+import difflib
+import importlib.metadata
+import os
+import subprocess
+import tomllib
+from pathlib import Path
+from typing import Any
+
+from .errors import ProvenanceError
+
+
+def collect_validator_provenance(source_dir: Path | None = None) -> dict[str, Any]:
+    root = _validator_repository(source_dir)
+    revision = _git(root, "rev-parse", "HEAD").strip()
+    status = _git(root, "status", "--porcelain=v1")
+    diff = _git(root, "diff", "--no-ext-diff", "--no-color", "HEAD", "--")
+    untracked = _git(root, "ls-files", "--others", "--exclude-standard", "-z")
+    for relative_name in untracked.split("\0"):
+        if not relative_name:
+            continue
+        path = root / relative_name
+        if not path.is_file():
+            continue
+        content = path.read_bytes()
+        if b"\0" in content:
+            diff += f"\nBinary untracked file {relative_name} is not text-diffable.\n"
+            continue
+        text = content.decode("utf-8", errors="replace")
+        diff += "".join(
+            difflib.unified_diff(
+                [],
+                text.splitlines(keepends=True),
+                fromfile="/dev/null",
+                tofile=f"b/{relative_name}",
+            )
+        )
+    return {
+        "repository": str(root),
+        "revision": revision,
+        "clean": not bool(status.strip()),
+        "changes": status,
+        "diff": diff,
+    }
+
+
+def dependency_versions() -> dict[str, str]:
+    versions: dict[str, str] = {}
+    for distribution in importlib.metadata.distributions():
+        try:
+            name = distribution.metadata["Name"]
+            if name:
+                versions[name] = distribution.version
+        except (AttributeError, KeyError, ValueError):
+            continue
+    return dict(sorted(versions.items(), key=lambda item: item[0].casefold()))
+
+
+def _validator_repository(source_dir: Path | None) -> Path:
+    configured = source_dir or (
+        Path(os.environ["AGENT_VALIDATION_SOURCE_DIR"]).resolve()
+        if os.environ.get("AGENT_VALIDATION_SOURCE_DIR")
+        else None
+    )
+    if configured is not None:
+        root = _git_root(configured)
+        if root is None:
+            raise ProvenanceError(
+                f"Cannot establish validator Git provenance from configured source: {configured}"
+            )
+        return root
+
+    module_path = Path(__file__).resolve()
+    attempted: list[str] = []
+    for candidate in (module_path.parents[2], Path.cwd()):
+        attempted.append(str(candidate))
+        root = _git_root(candidate)
+        if root is None:
+            continue
+        try:
+            relative_source = module_path.relative_to(root)
+            project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+        except (ValueError, OSError, tomllib.TOMLDecodeError):
+            continue
+        if relative_source.parts[:2] != ("src", "agent_validation"):
+            continue
+        if project.get("project", {}).get("name") != "agent-validation":
+            continue
+        return root
+    raise ProvenanceError(
+        "Cannot establish validator Git provenance for the running source from: "
+        + ", ".join(attempted)
+    )
+
+
+def _git_root(candidate: Path) -> Path | None:
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(candidate), "rev-parse", "--show-toplevel"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    return Path(completed.stdout.strip()).resolve()
+
+
+def _git(repository: Path, *arguments: str) -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(repository), *arguments],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ProvenanceError(f"Cannot inspect validator repository: {exc}") from exc
+    if completed.returncode != 0:
+        raise ProvenanceError(
+            f"Cannot inspect validator repository: {completed.stderr.strip()[:1000]}"
+        )
+    return completed.stdout

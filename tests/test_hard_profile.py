@@ -7,7 +7,12 @@ from statistics import mean
 from typing import Any
 
 from agent_validation.blocks_world import BlocksWorldEnvironment, BlocksWorldProblem
-from agent_validation.config import ResolvedProfile, load_profile
+from agent_validation.config import (
+    ResolvedProfile,
+    load_partial_configuration,
+    load_profile,
+    resolve_partial_profile,
+)
 from agent_validation.contracts import EpisodeRecord, ValidationScope
 from agent_validation.metrics import CriterionEvaluator, MetricCalculator
 
@@ -133,8 +138,11 @@ def public_action(action: Action) -> dict[str, Any]:
 
 def test_hard_full_and_partial_population_counts() -> None:
     resolved = hard_profile()
-    full = resolved.plan_episodes(ValidationScope.FULL)
-    partial = resolved.plan_episodes(ValidationScope.PARTIAL)
+    full = resolved.plan_episodes()
+    partial = resolve_partial_profile(
+        resolved,
+        load_partial_configuration(ROOT / "config" / "examples" / "blocksworld_hard_partial.yaml"),
+    ).plan_episodes()
     assert len(full) == 890
     assert len(partial) == 42
     assert Counter(episode.condition_id for episode in full) == {
@@ -225,8 +233,8 @@ def test_metrics_compute_over_all_hard_full_episodes() -> None:
 
 def test_default_population_is_unchanged_and_hard_profile_is_documented() -> None:
     default = load_profile("default", PROFILE_DIR)
-    assert len(default.plan_episodes(ValidationScope.FULL)) == 840
-    assert len(default.plan_episodes(ValidationScope.PARTIAL)) == 42
+    assert len(default.plan_episodes()) == 840
+    assert "partial" not in type(default.profile).model_fields
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "blocksworld_hard" in readme
     assert "optimal" in readme

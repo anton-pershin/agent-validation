@@ -119,10 +119,12 @@ The profile lists provider environment variables that the solution can receive. 
 
 ## Validation result
 
-The validation result contains the profile, scope, and one entry for each acceptance criterion. Metric keys combine stable VM identifiers with informative names:
+The validation result contains run identity, the registered base profile, scope, and one entry for each in-scope acceptance criterion. CLI output, HTTP responses, and the completed run's `result.json` use the same complete shape. Metric keys combine stable VM identifiers with informative names:
 
 ```json
 {
+  "run_id": "20261116T010203-040506Z-0123456789ab",
+  "artifacts_location": "/absolute/path/to/artifacts/runs/20261116T010203-040506Z-0123456789ab",
   "profile": "default",
   "validation_scope": "full",
   "AC1": {
@@ -146,3 +148,7 @@ Other single-instance keys include `VM2/error_flag_precision`, `VM3/error_flag_r
 - `VM7/transient_failure_overall_success_rate_loss/pick_up_failure`
 
 Bare VM keys are not used in the result. A computed metric has `acceptance_status` of `accepted` or `rejected`. A metric that cannot be computed has `computation_status` of `failed_to_compute`, a null `computed_value`, and an explanation in `error_message`.
+
+For partial validation, `profile` still identifies the registered base rather than the modified copy, and `validation_scope` is `partial`. The complete effective configuration is retained in run evidence. Partial criteria remain diagnostic and do not certify implementation acceptance.
+
+`run_id` and `artifacts_location` locate the unique run directory. Errors after run creation include the same identifiers. The directory's `run.json` manifest has status `running`, `completed`, `failed`, or `aborted`; this execution status is separate from criterion status, and the result has no overall implementation-outcome field. The manifest records the requested and verified solution commits, base and effective configuration hashes, validator source revision and uncommitted changes, runtime and dependency provenance, and retained-artifact references. `result.json` is mandatory for completed runs but not for failed or aborted runs.

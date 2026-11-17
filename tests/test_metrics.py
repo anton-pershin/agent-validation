@@ -40,7 +40,6 @@ def resolved_profile(tmp_path: Path) -> ResolvedProfile:
                 {"id": "f2", "action_name": "stack", "task_ids": ["t1", "t2"]},
             ],
             "full": scope,
-            "partial": scope,
             "criteria": {
                 "AC1": {"min_success_rate": 0.70},
                 "AC2": {"min_precision": 0.80, "min_recall": 0.50},
@@ -174,6 +173,22 @@ def test_all_metrics_match_independent_values_and_all_criteria_accept(tmp_path: 
         "t1": 1.0,
         "t2": 0.5,
     }
+
+
+def test_all_green_partial_criteria_remain_diagnostic(tmp_path: Path) -> None:
+    resolved, planned, records = metric_population(tmp_path)
+    computations = MetricCalculator(resolved, ValidationScope.PARTIAL, planned, records).compute()
+    result = CriterionEvaluator(resolved, ValidationScope.PARTIAL, computations).evaluate(
+        run_id="diagnostic-run", artifacts_location="/tmp/diagnostic-run"
+    )
+    assert result.validation_scope == ValidationScope.PARTIAL
+    assert {key: value.status for key, value in result.criteria.items()} == {
+        f"AC{index}": "accepted" for index in range(1, 8)
+    }
+    response = result.to_response()
+    assert response["run_id"] == "diagnostic-run"
+    assert "implementation_outcome" not in response
+    assert "accepted" not in response
 
 
 def test_vm5_reports_variant_gain_as_negative_loss_and_accepts_it(tmp_path: Path) -> None:
