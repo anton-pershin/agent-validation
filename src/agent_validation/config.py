@@ -103,7 +103,7 @@ class EnvironmentConfig(ProfileModel):
 
 class ValidationProfile(ProfileModel):
     name: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
-    solution_module: str = "reliable_agent"
+    solution_module: str = "reliable_agent_pddl"
     random_seed: int = 0
     original_instructions: str = Field(min_length=1)
     tasks: list[TaskConfig] = Field(min_length=1)

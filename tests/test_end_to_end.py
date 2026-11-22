@@ -479,13 +479,15 @@ def test_default_partial_population(git_solution, tmp_path: Path) -> None:
         temporary_root=tmp_path / "temporary",
         active_profile="default",
     )
+    configuration = load_partial_configuration(
+        settings.profile_dir.parent / "examples" / "default_partial.yaml"
+    )
+    configuration["solution_module"] = "reliable_agent"
     result = run_validation(
         settings,
         repo,
         first,
-        configuration=load_partial_configuration(
-            settings.profile_dir.parent / "examples" / "default_partial.yaml"
-        ),
+        configuration=configuration,
     )
     records = records_for(run_directories(settings)[0])
     assert result["validation_scope"] == "partial"
@@ -510,13 +512,15 @@ def test_blocksworld_hard_partial_service(git_solution, tmp_path: Path) -> None:
         temporary_root=tmp_path / "temporary",
         active_profile="blocksworld_hard",
     )
+    configuration = load_partial_configuration(
+        settings.profile_dir.parent / "examples" / "blocksworld_hard_partial.yaml"
+    )
+    configuration["solution_module"] = "reliable_agent"
     result = run_validation(
         settings,
         repo,
         first,
-        configuration=load_partial_configuration(
-            settings.profile_dir.parent / "examples" / "blocksworld_hard_partial.yaml"
-        ),
+        configuration=configuration,
     )
     records = records_for(run_directories(settings)[0])
     assert result["profile"] == "blocksworld_hard"

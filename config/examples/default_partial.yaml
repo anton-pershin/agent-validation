@@ -1,5 +1,5 @@
 name: default
-solution_module: reliable_agent
+solution_module: reliable_agent_pddl
 random_seed: 0
 original_instructions: >-
   Solve the Blocks World task in the supplied PDDL problem. Use the available

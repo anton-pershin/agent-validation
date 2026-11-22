@@ -1,6 +1,6 @@
 # Agent validation service
 
-This service evaluates an exact solution commit against either a registered full-validation profile or a complete caller-supplied partial configuration. The `default` profile evaluates `reliable-agent` with PDDL Blocks World tasks, repeated runs, prompt variants, and transient action failures. It is authoritative for project-level acceptance; `blocksworld_hard` provides supplementary full-validation evidence and cannot substitute for `default`.
+This service evaluates an exact solution commit against either a registered full-validation profile or a complete caller-supplied partial configuration. The `default` profile evaluates `reliable-agent-pddl` with PDDL Blocks World tasks, repeated runs, prompt variants, and transient action failures. It is authoritative for project-level acceptance; `blocksworld_hard` provides supplementary full-validation evidence and cannot substitute for `default`.
 
 Validation computes VM1–VM10 and evaluates AC1–AC7. Metric keys combine stable VM identifiers with informative names, such as `VM1/unperturbed_overall_success_rate` and `VM5/prompt_variant_overall_success_rate_loss/concise`. VM5 is the signed unperturbed-minus-variant success-rate difference: positive values are losses and negative values are gains. VM2 and VM3 are computed as `1.0` when their denominators are zero; retained evidence lists these instances in `vacuous_metrics`.
 
@@ -25,7 +25,7 @@ Use a full 40- or 64-character commit hash. Partial validation requires a comple
 
 ```bash
 .venv/bin/python validation_cli_partial.py \
-  --repo https://github.com/anton-pershin/reliable-agent.git \
+  --repo https://github.com/anton-pershin/reliable-agent-pddl.git \
   --commit FULL_COMMIT_HASH \
   --partial-config config/examples/default_partial.yaml \
   --output-json artifacts/partial-result.json \
@@ -38,7 +38,7 @@ For full validation:
 
 ```bash
 .venv/bin/python validation_cli.py \
-  --repo https://github.com/anton-pershin/reliable-agent.git \
+  --repo https://github.com/anton-pershin/reliable-agent-pddl.git \
   --commit FULL_COMMIT_HASH \
   --output-json artifacts/full-result.json \
   --solution-overrides '--model openai:gpt-5' \
@@ -93,7 +93,7 @@ from pathlib import Path
 
 discovery = json.loads(Path("artifacts/default-discovery.json").read_text())
 request = {
-    "repo": "https://github.com/anton-pershin/reliable-agent.git",
+    "repo": "https://github.com/anton-pershin/reliable-agent-pddl.git",
     "commit": "FULL_COMMIT_HASH",
     "solution_overrides": "",
     "profile": discovery["profile"],
@@ -117,7 +117,7 @@ A completed validation returns HTTP 200, including when criteria are valid or in
 
 ## Solution contract
 
-The service clones the repository into a temporary directory, checks out and verifies the exact commit, creates a fresh virtual environment, and installs the solution without editable mode. It starts `python -m reliable_agent` once for each episode. Arguments from `solution_overrides` are parsed without a shell. The `{repeat}` substring is replaced with the episode's one-based repeat number, so `--seed {repeat}` supplies a different seed for each repeat.
+The service clones the repository into a temporary directory, checks out and verifies the exact commit, creates a fresh virtual environment, and installs the solution without editable mode. It starts `python -m <solution_module>` once for each episode, using the active profile's configured module (`reliable_agent_pddl` for both PDDL profiles). Arguments from `solution_overrides` are parsed without a shell. The `{repeat}` substring is replaced with the episode's one-based repeat number, so `--seed {repeat}` supplies a different seed for each repeat.
 
 The process communicates through versioned JSON Lines on standard input and output. Standard output carries protocol messages only. Standard error carries solution logs. See [the solution interface](docs/solution-interface.md).
 
@@ -125,7 +125,7 @@ The process communicates through versioned JSON Lines on standard input and outp
 
 Registered profiles are full-validation-only YAML files in `config/profiles`; the available names are `default` and `blocksworld_hard`. They have no predefined partial subsections. A profile defines task files, conditions, repeats, thresholds, time and action limits, resource limits, and environment variables forwarded to the solution. Problem paths are relative to the registered profile file. Full validation never applies caller modifications.
 
-The `default` full profile has 20 distinct tasks and 10 repeats per condition, producing 840 episodes. `pick_up_failure` is eligible for 15 tasks that require pick-up, and `unstack_failure` is eligible for nine stacked tasks. It is the authoritative profile for `reliable-agent` project-level acceptance.
+The `default` full profile has 20 distinct tasks and 10 repeats per condition, producing 840 episodes. `pick_up_failure` is eligible for 15 tasks that require pick-up, and `unstack_failure` is eligible for nine stacked tasks. It is the authoritative profile for `reliable-agent-pddl` project-level acceptance.
 
 The `blocksworld_hard` full profile has the same acceptance thresholds as `default` and produces 890 episodes. Its 20 distinct tasks have six eight-action, eight ten-action, and six twelve-action shortest successful plans, giving a mean optimal plan length of ten actions. Optimal plan length counts only state-changing movement actions. It excludes action-catalog requests, rejected actions, injected failures, and retries. Tests verify these lengths with an independent breadth-first search. `pick_up_failure` applies to all 20 tasks and `unstack_failure` to nine. This profile is supplementary and cannot replace `default` when certifying project acceptance.
 

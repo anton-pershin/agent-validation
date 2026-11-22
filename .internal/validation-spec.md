@@ -4,7 +4,7 @@
 
 #### 1.1 Solution subproject management repos
 
-https://github.com/anton-pershin/reliable-agent
+https://github.com/anton-pershin/reliable-agent-pddl
 
 #### 1.2 Validation subproject implementation repos
 
@@ -80,9 +80,9 @@ The following implementation classifications use the complete result of the appl
 - **Valid implementation:** every in-scope AC has status `accepted` or `valid`, and at least one AC has status `valid`.
 - **Invalid implementation:** at least one in-scope AC has status `invalid`.
 
-A run status describes execution of the validation service, not implementation acceptance. A completed run can produce an invalid implementation. Section 4 defines which registered profile governs project-level acceptance for `reliable-agent`.
+A run status describes execution of the validation service, not implementation acceptance. A completed run can produce an invalid implementation. Section 4 defines which registered profile governs project-level acceptance for solution repos.
 
-| Requirement of reliable-agent | ACs |
+| Requirement of reliable-agent-pddl | ACs |
 |-------------------------------|-----|
 | FR1 | AC1 |
 | FR2 | AC2 |
@@ -94,20 +94,20 @@ A run status describes execution of the validation service, not implementation a
 
 ### 4. Validation profiles
 
-A validation profile is a named, registered full-validation configuration binding this service to one solution subproject. Full validation uses the registered configuration unchanged. Disabling an AC in a full profile is an explicit decision that must correspond to the absence of the corresponding requirement in the consumer's constitution spec. Both registered profiles below enable AC1–AC7 and cover every applicable requirement of `reliable-agent`.
+A validation profile is a named, registered full-validation configuration binding this service to one solution subproject. Full validation uses the registered configuration unchanged. Disabling an AC in a full profile is an explicit decision that must correspond to the absence of the corresponding requirement in the consumer's constitution spec. Both registered profiles below enable AC1–AC7 and cover every applicable requirement of solution repos.
 
 The validation spec is the source of truth for full validation. Registered profiles are stored as `config/profiles/<name>.yaml` in this repository, and their full-validation settings must mirror this section. Every change to a registered full profile is a revision of this validation spec.
 
 | Profile | Solution subproject | Full-validation ACs | Threshold overrides | Acceptance role |
 |---------|---------------------|---------------------|---------------------|-----------------|
-| default | `reliable-agent` (`https://github.com/anton-pershin/reliable-agent`) | AC1–AC7 | None; use Section 3 defaults. | Authoritative for project-level acceptance. |
-| blocksworld_hard | `reliable-agent` (`https://github.com/anton-pershin/reliable-agent`) | AC1–AC7 | None; use Section 3 defaults. | Supplementary full evaluation; cannot substitute for `default` when certifying project acceptance. |
+| default | `reliable-agent-pddl` (`https://github.com/anton-pershin/reliable-agent-pddl`) | AC1–AC7 | None; use Section 3 defaults. | Authoritative for project-level acceptance. |
+| blocksworld_hard | `reliable-agent-pddl` (`https://github.com/anton-pershin/reliable-agent-pddl`) | AC1–AC7 | None; use Section 3 defaults. | Supplementary full evaluation; cannot substitute for `default` when certifying project acceptance. |
 
 An accepted `default` implementation integrated into the solution's main branch completes the solution project. A `blocksworld_hard` result provides additional evidence and may be required by an individual increment spec, but it is not independently sufficient or necessary for project-level acceptance.
 
 #### 4.1 Common profile configuration
 
-Both profiles use the PDDL Blocks World benchmark, `solution_module = reliable_agent`, and `random_seed = 0`. Problem paths are relative to the registered profile file. Both use the following original instructions:
+Both profiles use the PDDL Blocks World benchmark, `solution_module = reliable_agent_pddl`, and `random_seed = 0`. Problem paths are relative to the registered profile file. Both use the following original instructions:
 
 > Solve the Blocks World task in the supplied PDDL problem. Use the available actions and observations. Declare completion only after the goal is satisfied. Return a concise answer, confidence, likely_incorrect, and a short reason.
 

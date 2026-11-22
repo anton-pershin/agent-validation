@@ -159,6 +159,8 @@ def test_clean_environment_acceptance(git_solution, tmp_path: Path) -> None:
 
     example = source_copy / "config" / "examples" / "default_partial.yaml"
     configuration = yaml.safe_load(example.read_text())
+    # The registered PDDL module is replaced by the independent scripted fixture.
+    configuration["solution_module"] = "reliable_agent"
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]

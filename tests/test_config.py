@@ -26,6 +26,7 @@ def test_default_registered_full_and_example_partial_populations() -> None:
         load_partial_configuration(ROOT / "config" / "examples" / "default_partial.yaml"),
     ).plan_episodes()
     assert len(full) == 840
+    assert profile.profile.solution_module == "reliable_agent_pddl"
     assert len(partial) == 42
     assert len({episode.episode_id for episode in full}) == 840
     assert {episode.repeat for episode in full} == set(range(1, 11))

@@ -144,6 +144,7 @@ def test_hard_full_and_partial_population_counts() -> None:
         load_partial_configuration(ROOT / "config" / "examples" / "blocksworld_hard_partial.yaml"),
     ).plan_episodes()
     assert len(full) == 890
+    assert resolved.profile.solution_module == "reliable_agent_pddl"
     assert len(partial) == 42
     assert Counter(episode.condition_id for episode in full) == {
         "unperturbed": 200,
