@@ -6,11 +6,8 @@ import threading
 import time
 from typing import Any
 
-from .blocks_world import (
-    TOOL_DESCRIPTIONS,
-    BlocksWorldEnvironment,
-    TransientFailureInjector,
-)
+from .benchmark import BenchmarkSession, create_benchmark_session
+from .blocks_world import TransientFailureInjector
 from .config import FailureScenarioConfig, ResolvedProfile
 from .contracts import EpisodeRecord, PlannedEpisode
 from .errors import (
@@ -40,14 +37,18 @@ class EpisodeExecutor:
         self.store = store
         self._cancel_event = threading.Event()
         self._processes: dict[str, SolutionProcess] = {}
+        self._sessions: dict[str, BenchmarkSession] = {}
         self._process_lock = threading.Lock()
 
     def cancel(self) -> None:
         self._cancel_event.set()
         with self._process_lock:
             processes = list(self._processes.values())
+            sessions = list(self._sessions.values())
         for process in processes:
             process.close()
+        for session in sessions:
+            session.abort()
 
     def execute(self, planned: PlannedEpisode) -> EpisodeRecord:
         action_attempts = 0
@@ -55,6 +56,7 @@ class EpisodeExecutor:
         elapsed_seconds: float | None = None
         transcript: list[dict[str, Any]] = []
         process: SolutionProcess | None = None
+        session: BenchmarkSession | None = None
         injector = TransientFailureInjector(self._scenario(planned.fault_scenario_id))
         likely_incorrect: bool | None = None
         error_flag_invalid = False
@@ -69,7 +71,11 @@ class EpisodeExecutor:
         error_message: str | None = None
         try:
             self._check_cancelled()
-            environment = BlocksWorldEnvironment.from_pddl(planned.problem_path)
+            session = create_benchmark_session(
+                self.resolved_profile, planned, run_id=self.store.run_id
+            )
+            with self._process_lock:
+                self._sessions[planned.episode_id] = session
             self.revision.reset_checkout()
             workspace = self.revision.episode_workspace(planned.episode_id)
             resources = self.profile.resources
@@ -93,8 +99,8 @@ class EpisodeExecutor:
                 "task": {
                     "id": planned.task_id,
                     "instructions": planned.instructions,
-                    "input": planned.task_input,
-                    "tools": TOOL_DESCRIPTIONS,
+                    "input": session.task_input,
+                    "tools": session.tools,
                 },
             }
             started_at = time.monotonic()
@@ -129,12 +135,12 @@ class EpisodeExecutor:
                     for offset, action in enumerate(actions):
                         self._check_deadline(deadline)
                         attempt_number = action_attempts - len(actions) + offset + 1
-                        if attempt_number > self.profile.criteria.AC6.max_action_attempts:
+                        if attempt_number > session.action_limit:
                             budget_exceeded = True
                             results.append(
                                 {
                                     "status": "rejected",
-                                    "observation": environment.observation(),
+                                    "observation": session.observation(),
                                     "error": {
                                         "type": "action_budget_exceeded",
                                         "message": (
@@ -150,7 +156,9 @@ class EpisodeExecutor:
                             else ""
                         )
                         injected_failure = injector.failure_for(action_name)
-                        result = environment.execute(action, injected_failure)
+                        result = session.execute(
+                            action, injected_failure, deadline=deadline
+                        )
                         injector.confirm(result)
                         results.append(result)
                         self._check_deadline(deadline)
@@ -204,7 +212,7 @@ class EpisodeExecutor:
                         likely_incorrect = raw_flag
                     else:
                         error_flag_invalid = True
-                    success = completed and environment.goal_satisfied()
+                    success = session.succeed(completed)
                     termination_reason = "completed" if completed else "stopped"
                     failure_kind = "none"
                     break
@@ -258,6 +266,27 @@ class EpisodeExecutor:
                         )
                     with self._process_lock:
                         self._processes.pop(planned.episode_id, None)
+                if session is not None:
+                    try:
+                        if termination_reason == "timeout":
+                            session.abort()
+                        else:
+                            session.close()
+                    except Exception as exc:
+                        success = False
+                        termination_reason = "infrastructure_error"
+                        failure_kind = "infrastructure"
+                        cleanup_message = str(exc)
+                        error_message = (
+                            f"{error_message}; {cleanup_message}"
+                            if error_message
+                            else cleanup_message
+                        )
+                    self.store.write_benchmark_evidence(
+                        planned.episode_id, session.evidence(), session.worker_log()
+                    )
+                    with self._process_lock:
+                        self._sessions.pop(planned.episode_id, None)
                 self.store.write_protocol(planned.episode_id, transcript)
             finally:
                 self.revision.cleanup_episode(planned.episode_id)

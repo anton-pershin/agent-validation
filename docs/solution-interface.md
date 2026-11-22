@@ -8,7 +8,7 @@ The validation service starts one process for each episode:
 python -m <solution_module> [solution_overrides]
 ```
 
-The module name comes from the active profile's `solution_module` setting. Both registered PDDL profiles use `reliable_agent_pddl`; another solution subproject can select its own importable module in its profile.
+The module name comes from the active profile's `solution_module` setting. Both registered PDDL profiles use `reliable_agent_pddl`; the AppWorld profile uses `reliable_agent_appworld`.
 
 The process runs in the fresh virtual environment created for the validation request. The service uses no shell to parse or execute overrides. After parsing, it replaces each `{repeat}` substring with the planned episode's one-based repeat number. For example, `--seed {repeat}` supplies seed 1 for repeat 1 and seed 10 for repeat 10. Each episode has a new process, HOME, workspace, environment state, and virtual-environment runtime copy. Changes to installed files in one episode do not affect another episode.
 
@@ -52,6 +52,27 @@ The first message is from the service:
 
 The Blocks World tools are `get_action_catalog`, `pick_up`, `put_down`, `stack`, and `unstack`. `stack` and `unstack` require `block` and `other_block`. The other actions require either no arguments or `block`, as shown by their schemas.
 
+### AppWorld task data and tool
+
+For AppWorld, `task.input` is a JSON string containing only public data:
+
+- `instruction`: the task instruction;
+- `supervisor`: public first/last name, email, and phone number;
+- `app_descriptions`: public application descriptions.
+
+The only AppWorld tool is `execute_code`. Its schema requires one string argument, `code`, and no other arguments. The code runs in a stateful Python shell with `apis` and `requester` objects. Use API Docs APIs for public schemas and Supervisor APIs for permitted account information. Print values that must be observed. Ground truth, private evaluation outcomes, evaluation reports, validation condition, and repeat number are not included in the task message.
+
+```json
+{
+  "name": "execute_code",
+  "arguments": {
+    "code": "response = apis.supervisor.show_active_task()\nprint(response)"
+  }
+}
+```
+
+Call `apis.supervisor.complete_task(...)` when the AppWorld task is complete, supplying an answer when required. This AppWorld call does not end the validation episode. Continue to observe results and send the normal final protocol message afterward.
+
 ## Action requests
 
 Send one action or a batch:
@@ -93,6 +114,8 @@ The service returns one result for each submitted action:
 
 `status` is `ok`, `error`, or `rejected`. An error result has an `error` object with `type` and `message`. Error types include `malformed_action`, `unknown_action`, `precondition_failed`, `transient_failure`, and `action_budget_exceeded`. Observations contain public world predicates only. A transient failure does not change the world state. Use the observation to retry, revise the approach, or stop.
 
+For AppWorld, a successful `execute_code` result has `observation.output` containing the stateful shell's printed output or `Execution successful.` AppWorld syntax/runtime failures are returned as an `execution_failed` error with the public execution traceback; these are ordinary observations, not validator infrastructure errors. AppWorld malformed/unknown actions and injected transient failures use the same error envelope. Private evaluation data is never included.
+
 Batch actions run in order until the action budget rejects an action. A rejected action and all later members of that batch receive rejected results. The episode then ends without a final response.
 
 ## Final response
@@ -113,11 +136,11 @@ End the episode with one final message:
 
 `completed` is the explicit completion declaration. Set it to `false` when stopping without a completion claim. `answer` and `reason` are strings. `confidence` is a number from 0 through 1. `likely_incorrect` must be a boolean and must report the solution's own assessment before private scoring.
 
-The service checks the final world state independently. Reaching a goal does not end the episode. Success requires `completed=true` and a goal-satisfying final state. A missing or invalid `likely_incorrect` makes error-awareness metrics fail to compute. Process exit without a final message, malformed output, timeout, and budget exhaustion remain unsuccessful episodes.
+The service checks the final benchmark state independently. For Blocks World, reaching a goal does not end the episode, and success requires `completed=true` and a goal-satisfying final state. For AppWorld, calling `complete_task` does not end the episode, and success requires `completed=true`, AppWorld task completion, and a successful private `world.evaluate()` result. `completed=false` is unsuccessful without private evaluation. A missing or invalid `likely_incorrect` makes error-awareness metrics fail to compute. Process exit without a final message, malformed output, timeout, and configured interaction-budget exhaustion remain unsuccessful episodes. AppWorld initialization, worker, evaluator, or cleanup failures that prevent scoring are infrastructure failures instead.
 
 ## Environment and limits
 
-The profile lists provider environment variables that the solution can receive. Other caller variables are not forwarded, except required system and certificate variables. Model waits, tool waits, retries, and self-assessment count toward the episode time limit. Dependency installation and setup before task delivery do not count.
+The profile lists provider environment variables that the solution can receive. Other caller variables are not forwarded, except required system and certificate variables. AppWorld workers do not receive provider variables. Model waits, tool/code waits, retries, and self-assessment count toward the episode time limit. Dependency installation and setup before task delivery do not count. AppWorld evaluation after the final response also does not extend the measured solution response time.
 
 ## Validation result
 

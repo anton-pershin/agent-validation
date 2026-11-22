@@ -185,6 +185,29 @@ def main() -> None:
         time.sleep(60)
     task_message = receive()
     task = task_message["task"]
+    if behavior in {"appworld_success", "appworld_no_complete", "appworld_slow"}:
+        if behavior == "appworld_success":
+            execute_actions(
+                task,
+                [
+                    {
+                        "name": "execute_code",
+                        "arguments": {"code": "apis.supervisor.complete_task()"},
+                    }
+                ],
+            )
+        elif behavior == "appworld_slow":
+            execute_actions(
+                task,
+                [
+                    {
+                        "name": "execute_code",
+                        "arguments": {"code": "import time; time.sleep(60)"},
+                    }
+                ],
+            )
+        final(task, likely_incorrect=behavior != "appworld_success")
+        return
     if behavior == "echo_seed":
         send(
             {

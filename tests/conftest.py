@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -11,6 +13,7 @@ from agent_validation.application import ServiceSettings
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_SOLUTION = ROOT / "tests" / "fixtures" / "scripted_solution"
+FAKE_APPWORLD_PACKAGE = ROOT / "tests" / "fixtures" / "fake_appworld"
 STACK_PROBLEM = ROOT / "config" / "blocks_world" / "problems" / "stack_ab.pddl"
 
 
@@ -91,6 +94,23 @@ def git_solution(tmp_path: Path) -> tuple[Path, str, str]:
     _git(repo, "commit", "-qm", "Second scripted revision")
     second = _git(repo, "rev-parse", "HEAD")
     return repo, first, second
+
+
+@pytest.fixture
+def fake_appworld_runtime(tmp_path: Path, monkeypatch) -> Path:
+    root = tmp_path / "appworld-root"
+    (root / "data" / "datasets").mkdir(parents=True)
+    python = tmp_path / "fake-appworld-python"
+    python.write_text(
+        "#!/bin/sh\n"
+        f"export PYTHONPATH={shlex.quote(str(FAKE_APPWORLD_PACKAGE))}\n"
+        f"exec {shlex.quote(sys.executable)} \"$@\"\n",
+        encoding="utf-8",
+    )
+    python.chmod(0o755)
+    monkeypatch.setenv("AGENT_VALIDATION_APPWORLD_PYTHON", str(python))
+    monkeypatch.setenv("AGENT_VALIDATION_APPWORLD_ROOT", str(root))
+    return root
 
 
 def _git(repo: Path, *arguments: str) -> str:

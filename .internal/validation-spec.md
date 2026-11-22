@@ -6,6 +6,8 @@
 
 https://github.com/anton-pershin/reliable-agent-pddl
 
+https://github.com/anton-pershin/reliable-agent-appworld
+
 #### 1.2 Validation subproject implementation repos
 
 https://github.com/anton-pershin/agent-validation
@@ -29,6 +31,8 @@ For each episode, the service independently records:
 - `elapsed_seconds`: elapsed wall time from delivery of the task to receipt of that response or forced termination, measured by the service with a monotonic clock. Include model and tool waits, retries, and self-assessment; exclude setup before task delivery and scoring after the response.
 
 For Blocks World, success requires an explicit completion declaration followed by a goal-satisfying final world state. Do not expose a goal-achieved flag or automatically stop when the goal becomes true. Each submitted action counts as one action attempt, including action-catalog requests, malformed actions, and precondition failures. Count each action in a batch separately. Neither reference-plan agreement nor plan optimality affects success.
+
+For AppWorld, the adapter exposes public task instruction, supervisor and app-description data plus a stateful `execute_code` action. Each submitted `execute_code` action is one action attempt, including malformed, rejected, failed, and retried actions; each batch member counts separately. Do not stop automatically when AppWorld's `complete_task` API is called. After the final response, success requires the protocol completion declaration, AppWorld task completion, and a successful independent `world.evaluate()` result. A false protocol completion declaration is unsuccessful and requires no private evaluation. Ground truth, evaluation results, and evaluation reports must never be sent to the solution. AppWorld worker failures that prevent observation or scoring are infrastructure failures. The configured AppWorld interaction limit is a safety limit independent of AC6; the registered AppWorld profile does not select AC6.
 
 Retain all planned episodes, including solution crashes, timeouts, malformed outputs, and budget exhaustion. These are unsuccessful episodes, not exclusions. A missing error flag is not an affirmative flag. If a completed response lacks a valid boolean flag, the error-awareness metrics fail to compute; do not silently omit that episode. Episodes terminated without a final response remain unflagged failures in error-recall calculations.
 
@@ -92,9 +96,18 @@ A run status describes execution of the validation service, not implementation a
 | NFR4 | AC6 |
 | NFR5 | AC7 |
 
+| Requirement of reliable-agent-appworld | ACs |
+|---------------------------------------|-----|
+| FR1 | AC1 |
+| FR2 | AC2 |
+| NFR1 | AC3 |
+| NFR5 | AC7 |
+
+AC4, AC5, and AC6 are outside the `appworld` full profile because the solution constitution does not contain NFR2, NFR3, or NFR4.
+
 ### 4. Validation profiles
 
-A validation profile is a named, registered full-validation configuration binding this service to one solution subproject. Full validation uses the registered configuration unchanged. Disabling an AC in a full profile is an explicit decision that must correspond to the absence of the corresponding requirement in the consumer's constitution spec. Both registered profiles below enable AC1–AC7 and cover every applicable requirement of solution repos.
+A validation profile is a named, registered full-validation configuration binding this service to one solution subproject. Full validation uses the registered configuration unchanged. Disabling an AC in a full profile is an explicit decision that must correspond to the absence of the corresponding requirement in the consumer's constitution spec. The `default` and `blocksworld_hard` profiles enable AC1–AC7 for `reliable-agent-pddl`. The `appworld` profile enables only AC1, AC2, AC3, and AC7 for `reliable-agent-appworld`, matching its smaller requirement set.
 
 The validation spec is the source of truth for full validation. Registered profiles are stored as `config/profiles/<name>.yaml` in this repository, and their full-validation settings must mirror this section. Every change to a registered full profile is a revision of this validation spec.
 
@@ -102,12 +115,13 @@ The validation spec is the source of truth for full validation. Registered profi
 |---------|---------------------|---------------------|---------------------|-----------------|
 | default | `reliable-agent-pddl` (`https://github.com/anton-pershin/reliable-agent-pddl`) | AC1–AC7 | None; use Section 3 defaults. | Authoritative for project-level acceptance. |
 | blocksworld_hard | `reliable-agent-pddl` (`https://github.com/anton-pershin/reliable-agent-pddl`) | AC1–AC7 | None; use Section 3 defaults. | Supplementary full evaluation; cannot substitute for `default` when certifying project acceptance. |
+| appworld | `reliable-agent-appworld` (`https://github.com/anton-pershin/reliable-agent-appworld`) | AC1, AC2, AC3, AC7 | None; use Section 3 defaults. | Authoritative for project-level acceptance. |
 
-An accepted `default` implementation integrated into the solution's main branch completes the solution project. A `blocksworld_hard` result provides additional evidence and may be required by an individual increment spec, but it is not independently sufficient or necessary for project-level acceptance.
+An accepted `default` implementation integrated into the PDDL solution's main branch completes that solution project. A `blocksworld_hard` result provides additional evidence and may be required by an individual increment spec, but it is not independently sufficient or necessary for PDDL project-level acceptance. An accepted `appworld` implementation integrated into the AppWorld solution's main branch completes that solution project. Profiles and partial results cannot substitute for one another's authoritative acceptance role.
 
-#### 4.1 Common profile configuration
+#### 4.1 Common PDDL profile configuration
 
-Both profiles use the PDDL Blocks World benchmark, `solution_module = reliable_agent_pddl`, and `random_seed = 0`. Problem paths are relative to the registered profile file. Both use the following original instructions:
+The two PDDL profiles use the PDDL Blocks World benchmark, `solution_module = reliable_agent_pddl`, and `random_seed = 0`. Problem paths are relative to the registered profile file. Both use the following original instructions:
 
 > Solve the Blocks World task in the supplied PDDL problem. Use the available actions and observations. Declare completion only after the goal is satisfied. Return a concise answer, confidence, likely_incorrect, and a short reason.
 
@@ -151,9 +165,35 @@ The full population uses all 20 tasks, 10 repeats, the original prompt, both pro
 
 This produces 600 unperturbed/prompt-variant episodes, 200 pick-up-failure episodes, and 90 unstack-failure episodes: **890 planned episodes** in total.
 
-#### 4.4 Partial validation
+#### 4.4 `appworld` full profile
 
-Partial validation starts from a registered base profile and applies a complete modified copy of its configuration for feedback. The copy may change any configuration setting. It need not be registered or mirrored in this spec, and creating or changing it does not revise this spec or the solution constitution. Example partial configurations may be kept outside `config/profiles/`.
+The profile binds `reliable-agent-appworld` to `appworld==0.1.3.post1`, source commit `66ad8099e12188ece0d3fe45e661dbc01880813b`, and AppWorld data version `0.1.0`. The approved wheel SHA-256 is `db77f8003982502383a50fa2974983894bd1c54f64e2fd3f7e1540d5edd037eb`; the data-bundle SHA-256 is `fd9f9608c2ec71ed0ac25c3633a738b9129a318a129e31230425b9188e508250`. Version-locked runtime dependencies are in `config/appworld/requirements.txt`. `scripts/provision_appworld.py` verifies these identities and the exact task lists during provisioning. The runtime and data locations are operational settings supplied through `AGENT_VALIDATION_APPWORLD_PYTHON` and `AGENT_VALIDATION_APPWORLD_ROOT`, not registered profile paths.
+
+The exact ordered task list is pinned in `config/profiles/appworld.yaml`: all 90 `train` tasks, all 57 `dev` tasks, and all 168 `test_normal` tasks, in that split order. The 315 identifiers are unique; `test_challenge` is excluded. Each task records its split and has no PDDL problem path. The full population uses these 315 tasks, exactly two repeats, the original prompt, no prompt variants, and no transient-failure scenarios. This produces **630 unperturbed episodes**. AC1, AC2, AC3, and AC7 use the Section 3 defaults without overrides.
+
+The profile uses `solution_module = reliable_agent_appworld`, `random_seed = 0`, and these original instructions:
+
+> Complete the supplied AppWorld task with the execute_code tool. The stateful Python shell provides apis and requester objects. Use the API Docs APIs to discover public API schemas and the Supervisor APIs for permitted account information. Print values that you need to observe. When the task is complete, call apis.supervisor.complete_task(...) with an answer when the task requires one. Then return a concise final answer, confidence, likely_incorrect, and a short reason. Do not access ground truth or private evaluation data.
+
+AppWorld-specific settings are:
+
+| Setting | Value |
+|---------|-------|
+| `appworld.max_interactions` | 100 |
+| `appworld.max_api_calls_per_interaction` | 1,000 |
+| `appworld.execution_timeout_seconds` | 100 |
+| `appworld.startup_timeout_seconds` | 60 |
+| `appworld.evaluation_timeout_seconds` | 60 |
+| `appworld.shutdown_timeout_seconds` | 10 |
+| `resources.episode_concurrency` | 1 |
+
+Other resource limits and provider-variable passthrough names are the same as in Section 4.1. The concurrency value is the registered full-run default, not a hard-coded limit. Partial configurations may change it, and the existing service-wide active-validation and total-episode environment settings remain configurable for other hosts.
+
+Each episode creates a fresh isolated AppWorld stdio worker with a unique experiment name. The package and data are pre-provisioned and reused; no worker persists while validation is idle. Setup occurs before task delivery. After the final response, private AppWorld evaluation and worker close occur outside the measured solution response time. Per-episode `benchmark.json` evidence retains configured and actual package/data identity, task/evaluation outcomes and report, peak worker RSS, CPU time, and cleanup state. Worker output is bounded and redacted, and temporary experiment output is removed after evidence is retained.
+
+#### 4.5 Partial validation
+
+Partial validation starts from a registered base profile and applies a complete modified copy of its configuration for feedback. The copy may change any configuration setting. It need not be registered or mirrored in this spec, and creating or changing it does not revise this spec or the solution constitution. Example partial configurations may be kept outside `config/profiles/`. For AppWorld routine iteration, a caller can fetch the complete configuration, retain the full task catalog while selecting any non-empty `full.task_ids` subset, and adjust repeats, criteria, worker limits, or concurrency before submission.
 
 Partial is relative to the acceptance contract; it need not be smaller, faster, or a subset of full validation. The service must retain the base-profile identity and complete modified configuration with every partial result. Partial results are diagnostic and cannot certify acceptance, even when every reported AC is accepted or the population equals a registered full population.
 
@@ -161,7 +201,7 @@ Partial is relative to the acceptance contract; it need not be smaller, faster, 
 
 #### 5.1 High-level design
 
-The design uses four layers. The CLI and HTTP API expose configuration discovery and full or partial validation. Evaluation orchestration resolves the registered base and effective configuration, creates the run record, checks out the requested solution revision, selects the configured benchmark population, and coordinates episodes. Benchmark and solution adapters run episodes and expose independently observed outcomes. Metric computation aggregates the episode records and evaluates in-scope criteria. Persistence creates and seals run evidence. All full- and partial-validation interfaces return the same complete JSON result.
+The design uses four layers. The CLI and HTTP API expose configuration discovery and full or partial validation. Evaluation orchestration resolves the registered base and effective configuration, creates the run record, checks out the requested solution revision, selects the configured benchmark population, and coordinates episodes. Benchmark and solution adapters run episodes and expose independently observed outcomes. Benchmark sessions isolate Blocks World state or an AppWorld stdio worker without changing common episode/metric contracts. Metric computation aggregates the episode records and evaluates in-scope criteria. Persistence creates and seals run evidence. All full- and partial-validation interfaces return the same complete JSON result.
 
 CLI inputs common to both scopes:
 
@@ -216,7 +256,8 @@ The run directory contains:
 
 - `run.json`: the automatically generated run manifest;
 - `result.json`: the complete response for every completed run, including all in-scope AC and VM outcomes;
-- planned and observed episode records, metrics, intermediate values, provisioning records, logs, and other retained artifacts referenced by the manifest.
+- planned and observed episode records, metrics, intermediate values, provisioning records, logs, and other retained artifacts referenced by the manifest;
+- benchmark-specific per-episode evidence where applicable, including AppWorld runtime identity, private evaluation result/report, worker peak RSS and CPU time, and cleanup state.
 
 The manifest identifies:
 
@@ -225,6 +266,7 @@ The manifest identifies:
 - the exact validator Git revision and clean/dirty state, including staged, unstaged, and untracked changes and their diff when present;
 - validation scope, registered base profile, base-profile content hash, complete resolved configuration, effective-configuration hash, and solution overrides;
 - runtime, platform, validator dependency versions, and resolved solution dependency versions;
+- configured benchmark identity, including AppWorld package source/data versions and approved hashes, with actual worker runtime identity and resource evidence retained per episode;
 - references to retained evidence;
 - run status: `running`, `completed`, `failed`, or `aborted`.
 
@@ -317,7 +359,7 @@ flowchart TD
 
 - **Integration and persistence layer**
   - Solution revision checkout and launcher: retrieve the requested commit and start the solution using configured overrides.
-  - Benchmark adapter: supply tasks, prompts, tools, reset behavior, injected-failure hooks, and independent correctness checks for the configured benchmark.
+  - Benchmark adapter and session factory: supply tasks, public prompts, tools, reset behavior, injected-failure hooks, and independent correctness checks for the configured benchmark. The AppWorld session manages one fresh isolated stdio worker per episode, unique experiment output, private evaluation, resource observations, and cleanup in a pre-provisioned separate Python runtime.
   - Validator provenance collector: record the exact validator source revision, uncommitted changes, runtime, platform, and dependency versions without exposing secrets.
   - Run manifest, episode, and artifact store: initialize and update `run.json`, persist complete results and audit evidence, and prevent changes to terminal runs.
 
@@ -330,6 +372,7 @@ flowchart TD
 | M3 | Episode resource lifecycle | Done | Isolated per-episode runtime copies and reliable cleanup of solution and provisioning process trees and temporary resources. | 1 week | Not applicable |
 | M4 | Flexible validation configuration | Done | Registered full-only profiles, schema discovery, arbitrary complete partial configurations, and matching CLI/HTTP result identity. | 1 week | Not applicable |
 | M5 | Complete run provenance and documentation | Done | Typed run manifests, validator source evidence, all terminal statuses, terminal-write protection, updated documentation, and complete contract regression tests. | 1 week | Not applicable |
+| M6 | AppWorld validation profile | Done | Pinned 315-task AppWorld profile, isolated configurable workers, independent evaluation and resource evidence, fine-grained partial validation, and reproducible provisioning. | 1 week | Not applicable |
 
 ```mermaid
 flowchart TD
@@ -338,4 +381,5 @@ flowchart TD
   M2 --> M4
   M3 --> M5
   M4 --> M5
+  M5 --> M6
 ```

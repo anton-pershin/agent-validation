@@ -1,4 +1,6 @@
 name: blocksworld_hard
+benchmark: blocks_world
+appworld: null
 solution_module: reliable_agent_pddl
 random_seed: 0
 original_instructions: >-
@@ -8,44 +10,64 @@ original_instructions: >-
 tasks:
   - id: rebuild_01
     problem: ../blocks_world/problems/hard/rebuild_01.pddl
+    split: null
   - id: rebuild_02
     problem: ../blocks_world/problems/hard/rebuild_02.pddl
+    split: null
   - id: rebuild_03
     problem: ../blocks_world/problems/hard/rebuild_03.pddl
+    split: null
   - id: rebuild_04
     problem: ../blocks_world/problems/hard/rebuild_04.pddl
+    split: null
   - id: rebuild_05
     problem: ../blocks_world/problems/hard/rebuild_05.pddl
+    split: null
   - id: rebuild_06
     problem: ../blocks_world/problems/hard/rebuild_06.pddl
+    split: null
   - id: rebuild_07
     problem: ../blocks_world/problems/hard/rebuild_07.pddl
+    split: null
   - id: rebuild_08
     problem: ../blocks_world/problems/hard/rebuild_08.pddl
+    split: null
   - id: rebuild_09
     problem: ../blocks_world/problems/hard/rebuild_09.pddl
+    split: null
   - id: rebuild_10
     problem: ../blocks_world/problems/hard/rebuild_10.pddl
+    split: null
   - id: rebuild_11
     problem: ../blocks_world/problems/hard/rebuild_11.pddl
+    split: null
   - id: rebuild_12
     problem: ../blocks_world/problems/hard/rebuild_12.pddl
+    split: null
   - id: rebuild_13
     problem: ../blocks_world/problems/hard/rebuild_13.pddl
+    split: null
   - id: rebuild_14
     problem: ../blocks_world/problems/hard/rebuild_14.pddl
+    split: null
   - id: rebuild_15
     problem: ../blocks_world/problems/hard/rebuild_15.pddl
+    split: null
   - id: rebuild_16
     problem: ../blocks_world/problems/hard/rebuild_16.pddl
+    split: null
   - id: rebuild_17
     problem: ../blocks_world/problems/hard/rebuild_17.pddl
+    split: null
   - id: rebuild_18
     problem: ../blocks_world/problems/hard/rebuild_18.pddl
+    split: null
   - id: rebuild_19
     problem: ../blocks_world/problems/hard/rebuild_19.pddl
+    split: null
   - id: rebuild_20
     problem: ../blocks_world/problems/hard/rebuild_20.pddl
+    split: null
 prompt_variants:
   - id: concise
     instructions: >-

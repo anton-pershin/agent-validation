@@ -7,7 +7,7 @@
 | Task | One benchmark-defined objective that an agent is asked to complete. |
 | Episode | One attempt to complete one task under one evaluation condition and repeat. |
 | Evaluation condition | A configuration for running episodes, such as the unperturbed configuration, a prompt variant, or a transient-failure scenario. |
-| Task success | Satisfaction of a task's correctness conditions, determined independently by the benchmark. For Blocks World, success requires an explicit completion declaration and a goal-satisfying final state. |
+| Task success | Satisfaction of a task's correctness conditions, determined independently by the benchmark. For Blocks World, success requires an explicit completion declaration and a goal-satisfying final state. For AppWorld, success requires the protocol completion declaration, AppWorld task completion, and a successful independent AppWorld evaluation. |
 | Task success rate | For one task and one evaluation condition, the number of successful planned episodes divided by the total number of planned episodes for that task and condition. Failed, timed-out, or crashed episodes remain in the denominator. |
 | Overall success rate | The arithmetic mean of task success rates across the benchmark task set for one evaluation condition. Each task has equal weight. |
 | Prompt-variant overall-success-rate loss | The signed difference `unperturbed overall success rate - variant overall success rate`. A negative value is a gain. |
@@ -73,5 +73,10 @@
 | Term | Definition |
 |------|------------|
 | Solution interface | The versioned JSON Lines interaction protocol between the validation service and one solution process. It exchanges public task data, action requests, observations, and final responses without private correctness information. |
+| Benchmark session | The benchmark-neutral boundary that presents one public task, executes actions, independently scores the final state, and releases benchmark resources for one episode. |
+| AppWorld worker | A fresh process in the isolated, pre-provisioned AppWorld Python runtime that owns one AppWorld world and communicates with its AppWorld session over bounded JSON Lines standard input/output. |
+| `execute_code` | The AppWorld public action that executes one agent-supplied Python code string in the episode's stateful AppWorld shell. It is one action attempt. |
+| AppWorld interaction limit | The configurable worker safety limit on `execute_code` attempts. It is independent of the AC6 acceptance threshold and of whether AC6 is selected. |
+| AppWorld runtime identity | The pinned AppWorld package/source and data versions, approved distribution hashes, and resolved dependency versions used to provision workers. |
 | Validator provenance | The exact validator Git revision, clean/dirty state and uncommitted diff, runtime, platform, and dependency versions retained in the run manifest. |
 | Terminal evidence protection | Rejection of service writes after a run becomes completed, failed, or aborted, and preservation of earlier run evidence during later executions. |

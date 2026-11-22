@@ -112,7 +112,7 @@ _ENUM_KEY_VALUES = {
     "condition_type": {"unperturbed", "prompt", "failure"},
     "direction": {"service_to_solution", "solution_to_service"},
     "failure_kind": {"none", "solution", "infrastructure"},
-    "name": {"get_action_catalog", "pick_up", "put_down", "stack", "unstack"},
+    "name": {"get_action_catalog", "pick_up", "put_down", "stack", "unstack", "execute_code"},
     "status": {
         "aborted",
         "accepted",

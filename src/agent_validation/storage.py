@@ -108,6 +108,21 @@ class RunStore:
             redact_text(log, self.secret_values).encode("utf-8", errors="replace"),
         )
 
+    def write_benchmark_evidence(
+        self, episode_id: str, evidence: dict[str, Any], worker_log: str
+    ) -> None:
+        if evidence:
+            self.write_json(
+                f"episodes/{episode_id}/benchmark.json", evidence, redact=True
+            )
+        if worker_log:
+            self._write_bytes(
+                f"episodes/{episode_id}/benchmark-stderr.log",
+                redact_text(worker_log, self.secret_values).encode(
+                    "utf-8", errors="replace"
+                ),
+            )
+
     def append_record(self, record: EpisodeRecord) -> None:
         serialized = redact_data(record.model_dump(mode="json"), self.secret_values)
         with self._lock:

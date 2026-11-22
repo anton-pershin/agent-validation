@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 import yaml
@@ -23,7 +23,30 @@ class ProfileModel(BaseModel):
 
 class TaskConfig(ProfileModel):
     id: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
-    problem: str
+    problem: str | None = None
+    split: Literal["train", "dev", "test_normal", "test_challenge"] | None = None
+
+
+class AppWorldConfig(ProfileModel):
+    package_version: str = "0.1.3.post1"
+    source_commit: str = Field(
+        default="66ad8099e12188ece0d3fe45e661dbc01880813b", pattern=r"^[0-9a-f]{40}$"
+    )
+    data_version: str = "0.1.0"
+    wheel_sha256: str = Field(
+        default="db77f8003982502383a50fa2974983894bd1c54f64e2fd3f7e1540d5edd037eb",
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    data_sha256: str = Field(
+        default="fd9f9608c2ec71ed0ac25c3633a738b9129a318a129e31230425b9188e508250",
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    max_interactions: int = Field(default=100, ge=1, le=10000)
+    max_api_calls_per_interaction: int = Field(default=1000, ge=1, le=100000)
+    execution_timeout_seconds: int = Field(default=100, ge=1)
+    startup_timeout_seconds: float = Field(default=60, gt=0)
+    evaluation_timeout_seconds: float = Field(default=60, gt=0)
+    shutdown_timeout_seconds: float = Field(default=10, gt=0)
 
 
 class PromptVariantConfig(ProfileModel):
@@ -103,9 +126,11 @@ class EnvironmentConfig(ProfileModel):
 
 class ValidationProfile(ProfileModel):
     name: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
+    benchmark: Literal["blocks_world", "appworld"] = "blocks_world"
     solution_module: str = "reliable_agent_pddl"
     random_seed: int = 0
     original_instructions: str = Field(min_length=1)
+    appworld: AppWorldConfig | None = None
     tasks: list[TaskConfig] = Field(min_length=1)
     prompt_variants: list[PromptVariantConfig] = Field(default_factory=list)
     failure_scenarios: list[FailureScenarioConfig] = Field(default_factory=list)
@@ -119,6 +144,18 @@ class ValidationProfile(ProfileModel):
 
     @model_validator(mode="after")
     def validate_references(self) -> ValidationProfile:
+        if self.benchmark == "blocks_world":
+            if self.appworld is not None:
+                raise ValueError("Blocks World profiles must not contain appworld configuration")
+            for task in self.tasks:
+                if not task.problem or task.split is not None:
+                    raise ValueError("Blocks World tasks require problem and no split")
+        else:
+            if self.appworld is None:
+                raise ValueError("AppWorld profiles require appworld configuration")
+            for task in self.tasks:
+                if task.problem is not None or task.split is None:
+                    raise ValueError("AppWorld tasks require split and no problem")
         task_ids = _unique_ids([task.id for task in self.tasks], "task")
         variant_ids = _unique_ids(
             [variant.id for variant in self.prompt_variants], "prompt variant"
@@ -196,18 +233,25 @@ class ResolvedProfile(BaseModel):
         for repeat in range(1, scope.repeats + 1):
             for task_id in scope.task_ids:
                 task = tasks[task_id]
-                problem_path = (self.path.parent / task.problem).resolve()
-                try:
-                    task_input = problem_path.read_text(encoding="utf-8")
-                except OSError as exc:
-                    raise ProfileError(
-                        f"Cannot read problem for task {task_id}: {problem_path}"
-                    ) from exc
+                if self.profile.benchmark == "blocks_world":
+                    if task.problem is None:
+                        raise ProfileError(f"Blocks World task {task_id} has no problem")
+                    problem_path = (self.path.parent / task.problem).resolve()
+                    try:
+                        task_input = problem_path.read_text(encoding="utf-8")
+                    except OSError as exc:
+                        raise ProfileError(
+                            f"Cannot read problem for task {task_id}: {problem_path}"
+                        ) from exc
+                    resolved_problem_path = str(problem_path)
+                else:
+                    task_input = ""
+                    resolved_problem_path = None
                 common = {
                     "task_id": task_id,
                     "repeat": repeat,
                     "task_input": task_input,
-                    "problem_path": str(problem_path),
+                    "problem_path": resolved_problem_path,
                 }
                 planned.append(
                     PlannedEpisode(
