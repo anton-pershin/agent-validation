@@ -60,7 +60,7 @@ For AppWorld, `task.input` is a JSON string containing only public data:
 - `supervisor`: public first/last name, email, and phone number;
 - `app_descriptions`: public application descriptions.
 
-The only AppWorld tool is `execute_code`. Its schema requires one string argument, `code`, and no other arguments. The code runs in a stateful Python shell with `apis` and `requester` objects. Use API Docs APIs for public schemas and Supervisor APIs for permitted account information. Print values that must be observed. Ground truth, private evaluation outcomes, evaluation reports, validation condition, and repeat number are not included in the task message.
+The only AppWorld tool is `execute_code`. Its schema requires one string argument, `code`, and no other arguments. The code runs in a stateful Python shell with `apis` and `requester` objects. Use API Docs APIs for public schemas and Supervisor APIs for permitted account information. Print values that must be observed. Ground truth, private evaluation outcomes, evaluation reports, validation condition, and repeat number are not included in the task message. A Linux Landlock allowlist prevents agent code from opening private task files, including direct `pathlib` reads; no agent code runs in the separate private evaluator.
 
 ```json
 {

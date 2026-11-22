@@ -9,6 +9,7 @@ Validation computes VM1–VM10 and evaluates AC1–AC7. Metric keys combine stab
 - Python 3.11 or later
 - Git
 - Network access to install solution dependencies and call the solution's model provider, when required
+- Linux with Landlock support for AppWorld execution workers; initialization fails closed if isolation cannot be enforced
 
 ## Install
 
@@ -154,7 +155,9 @@ The provisioning command checks the approved wheel and data SHA-256 values, inst
   --profile appworld
 ```
 
-Each episode starts a fresh AppWorld stdio worker with a unique experiment directory. The worker receives no provider credentials and communicates public task data and code-execution output only. After the solution's final response, the worker privately evaluates task completion and correctness, returns evidence, closes, and has its temporary experiment output removed. Ground truth and evaluation reports are never sent to the solution. No benchmark worker remains while validation is idle.
+Each episode starts a fresh AppWorld stdio execution worker with a unique experiment directory. The worker loads no ground truth and applies a Linux Landlock allowlist for runtime files, public task inputs, its own output, and episode-local temporary files. A per-episode self-test must prove that the task's ground-truth directory cannot be opened. AppWorld's standard safety guards remain enabled but are not treated as a private-data boundary. The worker receives no provider or provisioning credentials and communicates public task data and code-execution output only.
+
+After the solution's final response, the execution worker reports AppWorld task completion and closes. A separate trusted evaluator process, which never executes agent code, privately evaluates the saved state, returns evidence, and exits. Ground truth and evaluation reports are never sent to the solution. Per-episode evidence includes the Landlock ABI and execution/evaluator resource observations on success and available failure paths. Temporary experiment output is removed after evidence is retained. No benchmark worker remains while validation is idle.
 
 For routine partial validation, fetch `/profiles/appworld/configuration`, keep the complete configuration, and modify `full.task_ids`, `full.repeats`, acceptance scope, worker limits, or resources before submission. There is no fixed AppWorld partial preset. Use at least two repeats when AC3 remains selected; a one-repeat diagnostic configuration must omit AC3 if it is intended to produce only computable criteria.
 
@@ -213,4 +216,4 @@ The validation service does not own the solution's full-validation history. In t
 .venv/bin/ruff check .
 ```
 
-The tests use a local scripted solution and a fake AppWorld runtime. They do not call a model provider or download AppWorld. When the pinned real runtime is configured through the two AppWorld environment variables, `tests/test_appworld_real.py` also runs one train-task no-op execution/evaluation and cleanup smoke check; otherwise that test is skipped.
+The tests use a local scripted solution and a fake AppWorld runtime. They do not call a model provider or download AppWorld. When the pinned real runtime is configured through the two AppWorld environment variables, `tests/test_appworld_real.py` also runs one train-task no-op execution, an adversarial private-file read that Landlock must deny, separate private evaluation, retained `RunStore` evidence, and cleanup; otherwise that test is skipped.

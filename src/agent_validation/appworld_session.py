@@ -1,4 +1,4 @@
-"""AppWorld benchmark session backed by an isolated stdio worker."""
+"""AppWorld benchmark session backed by isolated stdio workers."""
 
 from __future__ import annotations
 
@@ -6,15 +6,21 @@ import json
 import os
 import shutil
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from .benchmark import BenchmarkSession
 from .config import ResolvedProfile
 from .contracts import PlannedEpisode
-from .errors import BenchmarkError
+from .errors import (
+    BenchmarkError,
+    SolutionExitedError,
+    SolutionOutputLimitError,
+    SolutionProtocolError,
+    SolutionTimeoutError,
+)
 from .protocol import SolutionProcess
-from .security import provisioning_environment
 
 APPWORLD_TOOL_DESCRIPTIONS: list[dict[str, Any]] = [
     {
@@ -35,7 +41,14 @@ APPWORLD_TOOL_DESCRIPTIONS: list[dict[str, Any]] = [
 
 
 class AppWorldSession(BenchmarkSession):
-    def __init__(self, resolved: ResolvedProfile, planned: PlannedEpisode, *, run_id: str) -> None:
+    def __init__(
+        self,
+        resolved: ResolvedProfile,
+        planned: PlannedEpisode,
+        *,
+        run_id: str,
+        on_create: Callable[[BenchmarkSession], None] | None = None,
+    ) -> None:
         self.resolved = resolved
         self.planned = planned
         self.settings = resolved.profile.appworld
@@ -43,55 +56,54 @@ class AppWorldSession(BenchmarkSession):
             raise BenchmarkError("AppWorld profile requires its appworld configuration")
         self.action_limit = self.settings.max_interactions
         self.tools = APPWORLD_TOOL_DESCRIPTIONS
+        self.task_input = ""
+        self.process: SolutionProcess | None = None
+        self.evaluation_process: SolutionProcess | None = None
+        self.output_directory: Path | None = None
         self._last_observation: dict[str, Any] = {}
         self._closed = False
         self._worker_closed = False
+        self.experiment_name = f"validation-{run_id}-{planned.episode_id}"
         self._evidence: dict[str, Any] = {
             "benchmark": "appworld",
             "task_id": planned.task_id,
             "configured": self.settings.model_dump(mode="json"),
+            "experiment_name": self.experiment_name,
             "execution_count": 0,
             "success": None,
+            "resources": None,
+            "resources_final": False,
+            "sandbox": "landlock",
         }
-        python = os.environ.get("AGENT_VALIDATION_APPWORLD_PYTHON")
-        root_value = os.environ.get("AGENT_VALIDATION_APPWORLD_ROOT")
-        if not python or not root_value:
-            raise BenchmarkError(
-                "AppWorld requires AGENT_VALIDATION_APPWORLD_PYTHON and "
-                "AGENT_VALIDATION_APPWORLD_ROOT"
-            )
-        self.python = Path(os.path.abspath(os.path.expanduser(python)))
-        self.root = Path(root_value).resolve()
-        if not self.python.is_file():
-            raise BenchmarkError(f"AppWorld Python does not exist: {self.python}")
-        if not (self.root / "data" / "datasets").is_dir():
-            raise BenchmarkError(f"AppWorld data is not provisioned under {self.root}")
-        self.experiment_name = f"validation-{run_id}-{planned.episode_id}"
-        self.output_directory = (
-            self.root / "experiments" / "outputs" / self.experiment_name
-        )
-        self._evidence["experiment_name"] = self.experiment_name
-        worker = Path(__file__).resolve().with_name("appworld_worker.py")
-        environment = provisioning_environment()
-        environment.update(
-            {
-                "APPWORLD_ROOT": str(self.root),
-                "APPWORLD_CACHE": str(self.root / ".appworld-cache"),
-                "PYTHONUNBUFFERED": "1",
-            }
-        )
-        environment.pop("PYTHONHOME", None)
-        environment.pop("PYTHONPATH", None)
-        resources = resolved.profile.resources
-        self.process = SolutionProcess(
-            [str(self.python), str(worker)],
-            self.root,
-            environment,
-            max_output_bytes=resources.max_output_bytes,
-            max_retained_log_bytes=resources.max_retained_log_bytes,
-            shutdown_seconds=resources.process_shutdown_seconds,
-        )
+        if on_create is not None:
+            on_create(self)
         try:
+            python = os.environ.get("AGENT_VALIDATION_APPWORLD_PYTHON")
+            root_value = os.environ.get("AGENT_VALIDATION_APPWORLD_ROOT")
+            if not python or not root_value:
+                raise BenchmarkError(
+                    "AppWorld requires AGENT_VALIDATION_APPWORLD_PYTHON and "
+                    "AGENT_VALIDATION_APPWORLD_ROOT"
+                )
+            self.python = Path(os.path.abspath(os.path.expanduser(python)))
+            self.root = Path(root_value).resolve()
+            if not self.python.is_file():
+                raise BenchmarkError(f"AppWorld Python does not exist: {self.python}")
+            if not (self.root / "data" / "datasets").is_dir():
+                raise BenchmarkError(f"AppWorld data is not provisioned under {self.root}")
+            self.output_directory = (
+                self.root / "experiments" / "outputs" / self.experiment_name
+            )
+            worker = Path(__file__).resolve().with_name("appworld_worker.py")
+            resources = resolved.profile.resources
+            self.process = SolutionProcess(
+                [str(self.python), str(worker)],
+                self.root,
+                self._environment(self.root),
+                max_output_bytes=resources.max_output_bytes,
+                max_retained_log_bytes=resources.max_retained_log_bytes,
+                shutdown_seconds=resources.process_shutdown_seconds,
+            )
             self.process.start()
             response = self._request(
                 "initialize",
@@ -112,6 +124,7 @@ class AppWorldSession(BenchmarkSession):
                 timeout_seconds=self.settings.startup_timeout_seconds,
             )
             runtime = response["runtime"]
+            self._evidence["runtime"] = runtime
             if runtime.get("package_version") != self.settings.package_version:
                 raise BenchmarkError(
                     "AppWorld runtime version does not match the registered profile: "
@@ -122,11 +135,11 @@ class AppWorldSession(BenchmarkSession):
                     "AppWorld data version does not match the registered profile: "
                     f"{runtime.get('data_version')}"
                 )
-            self._evidence["runtime"] = runtime
-            self.task_input = json.dumps(
-                response["task"], ensure_ascii=False, sort_keys=True
-            )
+            if type(runtime.get("landlock_abi")) is not int or runtime["landlock_abi"] < 1:
+                raise BenchmarkError("AppWorld worker did not enforce Landlock privacy isolation")
+            self.task_input = json.dumps(response["task"], ensure_ascii=False, sort_keys=True)
         except Exception as exc:
+            self._evidence["startup_error"] = str(exc)
             try:
                 self.abort()
             except Exception:
@@ -151,15 +164,20 @@ class AppWorldSession(BenchmarkSession):
         if injected_failure is not None:
             return self._error("transient_failure", injected_failure)
         code = action["arguments"]["code"]
-        timeout_seconds = self.settings.execution_timeout_seconds + 5
+        timeout_seconds = float(self.settings.execution_timeout_seconds + 5)
+        timeout_is_solution = False
         if deadline is not None:
-            timeout_seconds = min(timeout_seconds, max(0.0, deadline - time.monotonic()))
+            remaining = max(0.0, deadline - time.monotonic())
+            if remaining <= timeout_seconds:
+                timeout_seconds = remaining
+                timeout_is_solution = True
         response = self._request(
             "execute",
             {"type": "execute", "code": code},
             "execution",
             timeout_seconds=timeout_seconds,
             solution_controlled=True,
+            timeout_is_solution=timeout_is_solution,
         )
         output = response["output"]
         self._evidence["execution_count"] += 1
@@ -172,82 +190,71 @@ class AppWorldSession(BenchmarkSession):
         if not completed:
             self._evidence["success"] = False
             return False
-        response = self._request(
-            "evaluate",
-            {"type": "evaluate"},
-            "evaluation",
-            timeout_seconds=self.settings.evaluation_timeout_seconds,
+        completion = self._request(
+            "task_completed",
+            {"type": "task_completed"},
+            "task_completion",
+            timeout_seconds=self.settings.shutdown_timeout_seconds,
         )
+        task_completed = bool(completion["task_completed"])
+        self._evidence["task_completed"] = task_completed
+        self._request(
+            "close",
+            {"type": "close"},
+            "closed",
+            timeout_seconds=self.settings.shutdown_timeout_seconds,
+        )
+        self._worker_closed = True
+        self._evidence["resources_final"] = True
+        response = self._run_evaluator()
+        evaluation_success = bool(response["evaluation_success"])
         self._evidence.update(
             {
-                "task_completed": response["task_completed"],
-                "evaluation_success": response["evaluation_success"],
+                "evaluation_success": evaluation_success,
                 "evaluation": response["evaluation"],
                 "evaluation_report": response["report"],
-                "success": bool(response["success"]),
+                "success": bool(task_completed and evaluation_success),
             }
         )
-        return bool(response["success"])
+        return bool(task_completed and evaluation_success)
 
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
         errors: list[str] = []
-        if not self._worker_closed:
+        if self.process is not None and not self._worker_closed:
             try:
-                response = self._request(
+                self._request(
                     "close",
                     {"type": "close"},
                     "closed",
                     timeout_seconds=self.settings.shutdown_timeout_seconds,
                 )
-                self._evidence["resources"] = response["resources"]
                 self._worker_closed = True
+                self._evidence["resources_final"] = True
             except Exception as exc:
                 errors.append(str(exc))
-        try:
-            self.process.close()
-            if self.process.cleanup_error:
-                errors.append(self.process.cleanup_error)
-        except Exception as exc:
-            errors.append(str(exc))
-        try:
-            shutil.rmtree(self.output_directory)
-        except FileNotFoundError:
-            pass
-        except OSError as exc:
-            errors.append(f"Cannot remove AppWorld output: {exc}")
-        self._evidence["output_removed"] = not self.output_directory.exists()
-        if errors:
-            self._evidence["cleanup_error"] = "; ".join(errors)
-            raise BenchmarkError("AppWorld worker cleanup failed: " + "; ".join(errors))
+        errors.extend(self._close_processes())
+        self._remove_output(errors)
+        self._finish_cleanup(errors, "cleanup")
 
     def abort(self) -> None:
         self._closed = True
-        errors: list[str] = []
-        try:
-            self.process.close()
-            if self.process.cleanup_error:
-                errors.append(self.process.cleanup_error)
-        except Exception as exc:
-            errors.append(str(exc))
-        try:
-            shutil.rmtree(self.output_directory)
-        except FileNotFoundError:
-            pass
-        except OSError as exc:
-            errors.append(f"Cannot remove AppWorld output: {exc}")
-        self._evidence["output_removed"] = not self.output_directory.exists()
-        if errors:
-            self._evidence["cleanup_error"] = "; ".join(errors)
-            raise BenchmarkError("AppWorld worker abort failed: " + "; ".join(errors))
+        errors = self._close_processes()
+        self._remove_output(errors)
+        self._finish_cleanup(errors, "abort")
 
     def evidence(self) -> dict[str, Any]:
         return self._evidence
 
     def worker_log(self) -> str:
-        return self.process.stderr_text()
+        logs = []
+        if self.process is not None:
+            logs.append(self.process.stderr_text())
+        if self.evaluation_process is not None:
+            logs.append(self.evaluation_process.stderr_text())
+        return "\n".join(log for log in logs if log)
 
     def _request(
         self,
@@ -257,16 +264,12 @@ class AppWorldSession(BenchmarkSession):
         *,
         timeout_seconds: float,
         solution_controlled: bool = False,
+        timeout_is_solution: bool = False,
     ) -> dict[str, Any]:
-        from .errors import (
-            SolutionExitedError,
-            SolutionOutputLimitError,
-            SolutionProtocolError,
-            SolutionTimeoutError,
-        )
-
+        if self.process is None:
+            raise BenchmarkError("AppWorld worker was not created")
         if timeout_seconds <= 0:
-            if solution_controlled:
+            if timeout_is_solution:
                 raise SolutionTimeoutError("Solution exceeded the episode time limit")
             raise BenchmarkError(f"AppWorld worker {stage} deadline expired")
         message["protocol_version"] = 1
@@ -275,7 +278,7 @@ class AppWorldSession(BenchmarkSession):
             self.process.send(message, deadline)
             response = self.process.receive(deadline)
         except SolutionTimeoutError:
-            if solution_controlled:
+            if timeout_is_solution:
                 raise
             raise BenchmarkError(f"AppWorld worker timed out during {stage}") from None
         except SolutionOutputLimitError:
@@ -284,6 +287,58 @@ class AppWorldSession(BenchmarkSession):
             raise BenchmarkError(f"AppWorld worker output limit exceeded during {stage}") from None
         except (SolutionProtocolError, SolutionExitedError, OSError, ValueError) as exc:
             raise BenchmarkError(f"AppWorld worker failed during {stage}: {exc}") from exc
+        if isinstance(response.get("resources"), dict):
+            self._evidence["resources"] = response["resources"]
+        return self._validate_response(response, expected_type, stage)
+
+    def _run_evaluator(self) -> dict[str, Any]:
+        worker = Path(__file__).resolve().with_name("appworld_worker.py")
+        resources = self.resolved.profile.resources
+        process = SolutionProcess(
+            [
+                str(self.python),
+                str(worker),
+                "--evaluate-task",
+                self.planned.task_id,
+                self.experiment_name,
+            ],
+            self.root,
+            self._environment(self.root),
+            max_output_bytes=resources.max_output_bytes,
+            max_retained_log_bytes=resources.max_retained_log_bytes,
+            shutdown_seconds=resources.process_shutdown_seconds,
+        )
+        self.evaluation_process = process
+        response: dict[str, Any] | None = None
+        failure: Exception | None = None
+        try:
+            process.start()
+            response = process.receive(time.monotonic() + self.settings.evaluation_timeout_seconds)
+            if isinstance(response.get("resources"), dict):
+                self._evidence["evaluation_resources"] = response["resources"]
+            response = self._validate_response(response, "evaluation", "evaluate")
+        except Exception as exc:
+            failure = BenchmarkError(f"AppWorld evaluator failed: {exc}")
+        cleanup_error = process.cleanup_error
+        try:
+            process.close()
+            cleanup_error = process.cleanup_error
+        except Exception as exc:
+            cleanup_error = str(exc)
+        if cleanup_error:
+            if failure is None:
+                failure = BenchmarkError(f"AppWorld evaluator cleanup failed: {cleanup_error}")
+            else:
+                failure = BenchmarkError(f"{failure}; {cleanup_error}")
+        if failure is not None:
+            raise failure
+        assert response is not None
+        return response
+
+    @staticmethod
+    def _validate_response(
+        response: dict[str, Any], expected_type: str, stage: str
+    ) -> dict[str, Any]:
         version = response.get("protocol_version")
         if type(version) is not int or version != 1:
             raise BenchmarkError("AppWorld worker returned an invalid protocol version")
@@ -298,7 +353,55 @@ class AppWorldSession(BenchmarkSession):
             )
         return response
 
-    def _validate_action(self, action: Any) -> tuple[str, str] | None:
+    def _environment(self, root: Path) -> dict[str, str]:
+        names = ("PATH", "LANG", "LC_ALL", "TMPDIR", "SSL_CERT_FILE", "SSL_CERT_DIR")
+        environment = {name: os.environ[name] for name in names if name in os.environ}
+        environment.update(
+            {
+                "APPWORLD_ROOT": str(root),
+                "APPWORLD_CACHE": "/tmp/appworld-cache",
+                "HOME": "/tmp",
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONDONTWRITEBYTECODE": "1",
+            }
+        )
+        return environment
+
+    def _close_processes(self) -> list[str]:
+        errors: list[str] = []
+        for label, process in (
+            ("worker", self.process),
+            ("evaluator", self.evaluation_process),
+        ):
+            if process is None:
+                continue
+            try:
+                process.close()
+                if process.cleanup_error:
+                    errors.append(f"AppWorld {label}: {process.cleanup_error}")
+            except Exception as exc:
+                errors.append(f"AppWorld {label}: {exc}")
+        return errors
+
+    def _remove_output(self, errors: list[str]) -> None:
+        if self.output_directory is not None:
+            try:
+                shutil.rmtree(self.output_directory)
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                errors.append(f"Cannot remove AppWorld output: {exc}")
+        self._evidence["output_removed"] = (
+            self.output_directory is None or not self.output_directory.exists()
+        )
+
+    def _finish_cleanup(self, errors: list[str], operation: str) -> None:
+        if errors:
+            self._evidence["cleanup_error"] = "; ".join(errors)
+            raise BenchmarkError(f"AppWorld worker {operation} failed: " + "; ".join(errors))
+
+    @staticmethod
+    def _validate_action(action: Any) -> tuple[str, str] | None:
         if not isinstance(action, dict):
             return "malformed_action", "Action must be a JSON object"
         name = action.get("name")

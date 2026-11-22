@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import Any
 
 from .blocks_world import TOOL_DESCRIPTIONS, BlocksWorldEnvironment
@@ -89,11 +90,15 @@ def create_benchmark_session(
     planned: PlannedEpisode,
     *,
     run_id: str,
+    on_create: Callable[[BenchmarkSession], None] | None = None,
 ) -> BenchmarkSession:
     if resolved.profile.benchmark == "blocks_world":
-        return BlocksWorldSession(resolved, planned)
+        session = BlocksWorldSession(resolved, planned)
+        if on_create is not None:
+            on_create(session)
+        return session
     if resolved.profile.benchmark == "appworld":
         from .appworld_session import AppWorldSession
 
-        return AppWorldSession(resolved, planned, run_id=run_id)
+        return AppWorldSession(resolved, planned, run_id=run_id, on_create=on_create)
     raise ValueError(f"Unsupported benchmark: {resolved.profile.benchmark}")

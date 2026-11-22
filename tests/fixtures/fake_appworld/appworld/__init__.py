@@ -85,3 +85,14 @@ class AppWorld:
 
     def close(self) -> None:
         (self.output_directory / "closed").write_text("true", encoding="utf-8")
+
+
+def evaluate_task(task_id: str, experiment_name: str) -> _Tracker:
+    root = Path(os.environ["APPWORLD_ROOT"])
+    output = root / "experiments" / "outputs" / experiment_name
+    recorded_task = (output / "task-id").read_text(encoding="utf-8")
+    if recorded_task != task_id:
+        raise RuntimeError("fake evaluation output does not match the task")
+    if task_id == "eval_crash":
+        raise RuntimeError("fake evaluator infrastructure failure")
+    return _Tracker(success=task_id != "eval_fail")

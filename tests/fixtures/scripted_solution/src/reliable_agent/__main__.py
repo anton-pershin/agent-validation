@@ -178,6 +178,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--behavior", default="success")
     parser.add_argument("--api-key", default=None)
+    parser.add_argument("--action-count", type=int, default=51)
     parser.add_argument("--seed", default="unset")
     args = parser.parse_args()
     behavior = args.behavior
@@ -185,17 +186,26 @@ def main() -> None:
         time.sleep(60)
     task_message = receive()
     task = task_message["task"]
-    if behavior in {"appworld_success", "appworld_no_complete", "appworld_slow"}:
-        if behavior == "appworld_success":
-            execute_actions(
-                task,
-                [
-                    {
-                        "name": "execute_code",
-                        "arguments": {"code": "apis.supervisor.complete_task()"},
-                    }
-                ],
+    if behavior in {
+        "appworld_success",
+        "appworld_no_complete",
+        "appworld_slow",
+        "appworld_many",
+    }:
+        if behavior in {"appworld_success", "appworld_many"}:
+            actions = []
+            if behavior == "appworld_many":
+                actions = [
+                    {"name": "execute_code", "arguments": {"code": "pass"}}
+                    for _ in range(args.action_count)
+                ]
+            actions.append(
+                {
+                    "name": "execute_code",
+                    "arguments": {"code": "apis.supervisor.complete_task()"},
+                }
             )
+            execute_actions(task, actions)
         elif behavior == "appworld_slow":
             execute_actions(
                 task,

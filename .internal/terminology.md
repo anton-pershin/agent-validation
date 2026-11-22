@@ -74,7 +74,8 @@
 |------|------------|
 | Solution interface | The versioned JSON Lines interaction protocol between the validation service and one solution process. It exchanges public task data, action requests, observations, and final responses without private correctness information. |
 | Benchmark session | The benchmark-neutral boundary that presents one public task, executes actions, independently scores the final state, and releases benchmark resources for one episode. |
-| AppWorld worker | A fresh process in the isolated, pre-provisioned AppWorld Python runtime that owns one AppWorld world and communicates with its AppWorld session over bounded JSON Lines standard input/output. |
+| AppWorld worker | A fresh process in the isolated, pre-provisioned AppWorld Python runtime that owns one AppWorld world and communicates with its AppWorld session over bounded JSON Lines standard input/output. The execution worker loads no ground truth and is restricted by Linux Landlock. |
+| AppWorld private evaluator | A separate trusted process that runs after the execution worker closes. It evaluates saved episode state with private ground truth and never executes agent code. |
 | `execute_code` | The AppWorld public action that executes one agent-supplied Python code string in the episode's stateful AppWorld shell. It is one action attempt. |
 | AppWorld interaction limit | The configurable worker safety limit on `execute_code` attempts. It is independent of the AC6 acceptance threshold and of whether AC6 is selected. |
 | AppWorld runtime identity | The pinned AppWorld package/source and data versions, approved distribution hashes, and resolved dependency versions used to provision workers. |

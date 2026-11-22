@@ -71,11 +71,16 @@ class EpisodeExecutor:
         error_message: str | None = None
         try:
             self._check_cancelled()
+            def register_session(created: BenchmarkSession) -> None:
+                with self._process_lock:
+                    self._sessions[planned.episode_id] = created
+
             session = create_benchmark_session(
-                self.resolved_profile, planned, run_id=self.store.run_id
+                self.resolved_profile,
+                planned,
+                run_id=self.store.run_id,
+                on_create=register_session,
             )
-            with self._process_lock:
-                self._sessions[planned.episode_id] = session
             self.revision.reset_checkout()
             workspace = self.revision.episode_workspace(planned.episode_id)
             resources = self.profile.resources
@@ -266,9 +271,12 @@ class EpisodeExecutor:
                         )
                     with self._process_lock:
                         self._processes.pop(planned.episode_id, None)
+                if session is None:
+                    with self._process_lock:
+                        session = self._sessions.get(planned.episode_id)
                 if session is not None:
                     try:
-                        if termination_reason == "timeout":
+                        if termination_reason in {"timeout", "infrastructure_error"}:
                             session.abort()
                         else:
                             session.close()

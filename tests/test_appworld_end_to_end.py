@@ -1,23 +1,34 @@
 from __future__ import annotations
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import yaml
 from appworld_helpers import appworld_configuration
 
+import agent_validation.application as application_module
 from agent_validation.application import ServiceSettings, ValidationApplication
+from agent_validation.appworld_session import AppWorldSession
 from agent_validation.config import load_profile
 from agent_validation.contracts import EpisodeRecord, ValidationRequest, ValidationScope
+from agent_validation.errors import BenchmarkError
 
 
 def settings_for(
-    tmp_path: Path, task_id: str = "task_one", time_limit_seconds: float = 300
+    tmp_path: Path,
+    task_id: str = "task_one",
+    time_limit_seconds: float = 300,
+    max_interactions: int = 100,
+    execution_timeout_seconds: int = 5,
 ) -> ServiceSettings:
     profile_dir = tmp_path / "profiles"
     profile_dir.mkdir()
     configuration = appworld_configuration(task_id, solution_module="reliable_agent")
     configuration["criteria"]["AC7"]["time_limit_seconds"] = time_limit_seconds
+    configuration["appworld"]["max_interactions"] = max_interactions
+    configuration["appworld"]["execution_timeout_seconds"] = execution_timeout_seconds
     (profile_dir / "appworld.yaml").write_text(
         yaml.safe_dump(configuration, sort_keys=False), encoding="utf-8"
     )
@@ -110,7 +121,8 @@ def test_appworld_evaluator_failure_invalidates_affected_metrics(
     evidence = json.loads(
         (run_directory / "episodes" / record.episode_id / "benchmark.json").read_text()
     )
-    assert "cleanup_error" in evidence
+    assert evidence["resources"]["peak_rss_kib"] > 0
+    assert evidence["evaluation_resources"]["peak_rss_kib"] > 0
     assert evidence["output_removed"] is True
     assert load_profile("appworld", settings.profile_dir).profile.benchmark == "appworld"
 
@@ -130,3 +142,123 @@ def test_appworld_solution_timeout_remains_solution_failure(
     )
     assert evidence["output_removed"] is True
     assert "cleanup_error" not in evidence
+
+
+def test_appworld_transport_timeout_is_infrastructure_failure(
+    fake_appworld_runtime: Path, git_solution, tmp_path: Path
+) -> None:
+    repo, commit, _ = git_solution
+    settings = settings_for(tmp_path, execution_timeout_seconds=1)
+    result = run_validation(settings, repo, commit, "appworld_slow")
+    assert result["AC1"]["status"] == "invalid"
+    run_directory, record = only_record(settings)
+    assert record.success is None
+    assert record.failure_kind == "infrastructure"
+    assert "timed out during execute" in (record.error_message or "")
+    evidence = json.loads(
+        (run_directory / "episodes" / record.episode_id / "benchmark.json").read_text()
+    )
+    assert evidence["resources"]["peak_rss_kib"] > 0
+    assert evidence["output_removed"] is True
+
+
+def test_appworld_initialization_failure_retains_partial_evidence(
+    fake_appworld_runtime: Path, git_solution, tmp_path: Path
+) -> None:
+    repo, commit, _ = git_solution
+    settings = settings_for(tmp_path, "data_mismatch")
+    result = run_validation(settings, repo, commit, "appworld_success")
+    assert result["AC1"]["status"] == "invalid"
+    run_directory, record = only_record(settings)
+    assert record.failure_kind == "infrastructure"
+    evidence = json.loads(
+        (run_directory / "episodes" / record.episode_id / "benchmark.json").read_text()
+    )
+    assert "data version" in evidence["startup_error"]
+    assert evidence["resources"]["peak_rss_kib"] > 0
+    assert evidence["output_removed"] is True
+
+
+def test_appworld_interaction_limit_is_independent_of_ac6(
+    fake_appworld_runtime: Path, git_solution, tmp_path: Path
+) -> None:
+    repo, commit, _ = git_solution
+    settings = settings_for(tmp_path, max_interactions=52)
+    run_validation(settings, repo, commit, "appworld_many --action-count 51")
+    _, record = only_record(settings)
+    assert record.success is True
+    assert record.action_attempts == 52
+    assert record.action_attempts > 50
+
+
+def test_appworld_interaction_limit_is_enforced(
+    fake_appworld_runtime: Path, git_solution, tmp_path: Path
+) -> None:
+    repo, commit, _ = git_solution
+    settings = settings_for(tmp_path, max_interactions=2)
+    run_validation(settings, repo, commit, "appworld_many --action-count 2")
+    _, record = only_record(settings)
+    assert record.success is False
+    assert record.action_attempts == 3
+    assert record.termination_reason == "action_budget_exhausted"
+
+
+def test_appworld_cleanup_failure_is_infrastructure_failure(
+    fake_appworld_runtime: Path, git_solution, tmp_path: Path, monkeypatch
+) -> None:
+    original = AppWorldSession.close
+
+    def fail_after_cleanup(session):
+        original(session)
+        session.evidence()["cleanup_error"] = "injected cleanup failure"
+        raise BenchmarkError("injected cleanup failure")
+
+    monkeypatch.setattr(AppWorldSession, "close", fail_after_cleanup)
+    repo, commit, _ = git_solution
+    settings = settings_for(tmp_path)
+    result = run_validation(settings, repo, commit, "appworld_success")
+    assert result["AC1"]["status"] == "invalid"
+    run_directory, record = only_record(settings)
+    assert record.failure_kind == "infrastructure"
+    assert "injected cleanup failure" in (record.error_message or "")
+    evidence = json.loads(
+        (run_directory / "episodes" / record.episode_id / "benchmark.json").read_text()
+    )
+    assert evidence["output_removed"] is True
+
+
+def test_appworld_episode_executor_cancellation_terminates_worker(
+    fake_appworld_runtime: Path, git_solution, tmp_path: Path, monkeypatch
+) -> None:
+    original_executor = application_module.EpisodeExecutor
+    executors = []
+
+    def capture_executor(*arguments):
+        executor = original_executor(*arguments)
+        executors.append(executor)
+        return executor
+
+    started = threading.Event()
+    original_execute = AppWorldSession.execute
+
+    def notify_started(session, *arguments, **keywords):
+        started.set()
+        return original_execute(session, *arguments, **keywords)
+
+    monkeypatch.setattr(application_module, "EpisodeExecutor", capture_executor)
+    monkeypatch.setattr(AppWorldSession, "execute", notify_started)
+    repo, commit, _ = git_solution
+    settings = settings_for(tmp_path)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(run_validation, settings, repo, commit, "appworld_slow")
+        assert started.wait(30)
+        executors[0].cancel()
+        future.result(timeout=15)
+    run_directory, record = only_record(settings)
+    assert record.termination_reason == "aborted"
+    assert record.failure_kind == "infrastructure"
+    evidence = json.loads(
+        (run_directory / "episodes" / record.episode_id / "benchmark.json").read_text()
+    )
+    assert evidence["resources"]["peak_rss_kib"] > 0
+    assert evidence["output_removed"] is True

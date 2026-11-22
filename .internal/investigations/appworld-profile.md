@@ -15,7 +15,7 @@ Define and implement the registered `appworld` validation profile required by is
 
 ### Current state
 
-The service originally had two Blocks World profiles and a concrete Blocks World execution path. The selected AppWorld design is recorded in `.internal/specs/15-appworld-profile-general-spec.md`. The adapter, registered profile, provisioning utility, fake-runtime integration tests, and documentation are implemented. Ruff, the clean complete regression suite (154 passed, 1 real-runtime skip), real-runtime smoke checks, and end-to-end provisioning pass. Independent review and PR checks remain.
+The service originally had two Blocks World profiles and a concrete Blocks World execution path. The selected AppWorld design is recorded in `.internal/specs/15-appworld-profile-general-spec.md`. The adapter, registered profile, provisioning utility, fake-runtime integration tests, and documentation are implemented. Independent review findings led to Landlock privacy enforcement, a separate trusted evaluator, corrected timeout classification, partial failure evidence, and expanded acceptance tests. The final clean suite passed all 166 tests, including the real adversarial/evaluation smoke test. Ruff and end-to-end provisioning pass. PR CI and review remain.
 
 ### Contexts
 
@@ -52,12 +52,15 @@ The service originally had two Blocks World profiles and a concrete Blocks World
 | E6 | Does the implemented stdio worker operate with the real pinned runtime? | C1 | Initial probes exposed an adapter filename that shadowed `import appworld` and an interpreter-path `.resolve()` call that bypassed the venv. After correction, real train-task initialization, no-op execution, private evaluation, resource reporting, and cleanup passed. | Keep the adapter name `appworld_session.py` and preserve the venv interpreter symlink path. Retain `tests/test_appworld_real.py` as the repeatable smoke check. |
 | E7 | Can operators provision the exact approved runtime reproducibly? | C1 | `scripts/provision_appworld.py` installed the locked dependencies, verified wheel/data SHA-256 values, matched all selected task IDs, and its provisioned runtime passed the real smoke test. | Use the checked provisioning utility and exact dependency manifest; do not use a floating install. |
 | E8 | Does the integration preserve existing behavior? | C2 | The clean complete suite passed 154 tests with one expected real-runtime skip. Ruff and both main/AppWorld `pip check` runs passed; all 79 locked AppWorld distributions matched the manifest. | Retain the benchmark-session boundary and use the complete suite as the PR regression gate. |
+| E9 | Do AppWorld's standard guards enforce private-data confidentiality? | C1 | Independent review demonstrated that `Path.read_text()` can read ground truth despite those guards. Bubblewrap mount isolation was tested but this host's AppArmor policy denies its user namespace. A Landlock allowlist plus a separate trusted evaluator passed the real no-op/evaluation smoke and denied the adversarial private read with `PermissionError`. | Never treat AppWorld's guards as a privacy boundary. Require per-episode Landlock enforcement/self-test and run no agent code in the evaluator. |
+| E10 | Are failure classes and evidence complete on error paths? | C2 | Expanded tests now cover worker transport timeout versus solution deadline, partial startup evidence, abort resource samples, evaluator/cleanup failures, cancellation, actual interaction limits, redaction, and terminal-write rejection. Focused tests and Ruff pass. | Retain these cases as regression requirements and rerun the complete suite after the review changes. |
+| E11 | Does the final reviewed implementation pass its complete acceptance checks? | C1 and C2 | The final clean suite passed 166 tests with no skip because the pinned real runtime was configured. It included the real adversarial private read, separate evaluation, and retained `RunStore` evidence. | Use this result as local PR evidence; retain matrix CI on Python 3.11–3.13 as the exact-head gate. |
 
 ### Next candidates
 
 - [x] Run the implemented worker against the pinned real AppWorld runtime without a model provider.
-- [x] Run the clean complete regression suite and address review findings.
-- [ ] Complete independent review and required PR CI.
+- [x] Run the final clean complete regression suite after the review changes.
+- [ ] Complete required PR CI and human review.
 - [ ] Measure later real solution runs and adjust deployment limits without changing the registered population.
 
 ### Linked specs

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shlex
 import shutil
 import subprocess
 import sys
@@ -100,14 +99,22 @@ def git_solution(tmp_path: Path) -> tuple[Path, str, str]:
 def fake_appworld_runtime(tmp_path: Path, monkeypatch) -> Path:
     root = tmp_path / "appworld-root"
     (root / "data" / "datasets").mkdir(parents=True)
-    python = tmp_path / "fake-appworld-python"
-    python.write_text(
-        "#!/bin/sh\n"
-        f"export PYTHONPATH={shlex.quote(str(FAKE_APPWORLD_PACKAGE))}\n"
-        f"exec {shlex.quote(sys.executable)} \"$@\"\n",
-        encoding="utf-8",
+    for task_id in ("task_one", "task_two", "eval_fail", "eval_crash", "data_mismatch"):
+        ground_truth = root / "data" / "tasks" / task_id / "ground_truth"
+        ground_truth.mkdir(parents=True)
+        (ground_truth / "answer.json").write_text(
+            '"FAKE_GROUND_TRUTH_SECRET"', encoding="utf-8"
+        )
+    runtime = tmp_path / "fake-appworld-runtime"
+    subprocess.run([sys.executable, "-m", "venv", str(runtime)], check=True)
+    site_packages = (
+        runtime
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
     )
-    python.chmod(0o755)
+    shutil.copytree(FAKE_APPWORLD_PACKAGE / "appworld", site_packages / "appworld")
+    python = runtime / "bin" / "python"
     monkeypatch.setenv("AGENT_VALIDATION_APPWORLD_PYTHON", str(python))
     monkeypatch.setenv("AGENT_VALIDATION_APPWORLD_ROOT", str(root))
     return root
