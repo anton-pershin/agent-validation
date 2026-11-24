@@ -290,6 +290,27 @@
     .numbered-list { padding-left: 22px; color: var(--muted); }
     .numbered-list li { margin-bottom: 12px; }
     .file-tree { max-height: 520px; }
+    .evaluator-explainer, .discovery-panel { margin-top: 18px; }
+    .verdict-banner { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 14px; }
+    .verdict-banner strong { color: var(--green); }
+    .evaluation-pipeline, .discovery-flow { list-style: none; padding: 0; margin: 22px 0; }
+    .evaluation-pipeline { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+    .evaluation-pipeline li, .discovery-flow li { position: relative; padding: 16px 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(8, 17, 31, .45); }
+    .evaluation-pipeline li span, .discovery-flow li span { display: grid; place-items: center; width: 28px; height: 28px; margin-bottom: 10px; border-radius: 50%; background: var(--cyan); color: #062324; font-weight: 850; }
+    .evaluation-pipeline li strong, .discovery-flow li strong { display: block; margin-bottom: 7px; font-size: .85rem; }
+    .evaluation-pipeline li small, .discovery-flow li small { display: block; color: var(--muted); font-size: .73rem; line-height: 1.5; }
+    .evaluation-pipeline li:not(:last-child)::after, .discovery-flow li:not(:last-child)::after { content: "→"; position: absolute; right: -13px; top: 18px; color: var(--amber); z-index: 2; }
+    .eval-kind { padding: 18px; border: 1px solid var(--line); border-radius: 14px; }
+    .eval-kind > code { display: block; color: var(--amber); overflow-wrap: anywhere; font-size: .78rem; }
+    .discovery-flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .discovery-flow li span { background: var(--violet); color: #18102b; }
+    @media (max-width: 960px) {
+      .evaluation-pipeline { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .evaluation-pipeline li::after, .discovery-flow li::after { display: none; }
+    }
+    @media (max-width: 640px) {
+      .evaluation-pipeline, .discovery-flow { grid-template-columns: 1fr; }
+    }
     @keyframes request-pass {
       0% { left: 23%; opacity: 0; }
       15% { opacity: 1; }
@@ -406,22 +427,22 @@
         </defs>
         <path id="flow-request" class="flow" d="M200 100 H260"/>
         <path id="flow-revision" class="flow" d="M430 100 H490"/>
-        <path id="flow-solution" class="flow" d="M670 100 H820"/>
+        <path id="flow-solution" class="flow" d="M670 80 C730 80 760 80 820 80"/>
         <path id="flow-worker" class="flow" d="M580 140 V190 H740 V250"/>
         <path id="flow-task" class="flow" d="M740 250 V180 H830 V140"/>
         <path id="flow-actions" class="flow" d="M830 140 V210 H740 V250"/>
-        <path id="flow-final" class="flow" d="M820 100 H670"/>
-        <path id="flow-evaluate" class="flow" d="M650 290 H610"/>
-        <path id="flow-evidence" class="flow" d="M430 290 H230"/>
+        <path id="flow-final" class="flow" d="M820 120 C760 120 730 120 670 120"/>
+        <path id="flow-evaluate" class="flow" d="M650 290 H540"/>
+        <path id="flow-evidence" class="flow" d="M360 290 H230"/>
         <text class="flow-label" x="230" y="84">request</text>
         <text class="flow-label" x="460" y="84">resolve</text>
-        <text class="flow-label" x="742" y="84">invoke solution</text>
+        <text class="flow-label" x="745" y="65">invoke solution →</text>
         <text class="flow-label" x="670" y="176">new worker</text>
         <text class="flow-label" x="780" y="176">public task</text>
         <text class="flow-label" x="785" y="228">code ↔ output</text>
-        <text class="flow-label" x="746" y="84">final response</text>
-        <text class="flow-label" x="630" y="274">saved state</text>
-        <text class="flow-label" x="330" y="274">private result</text>
+        <text class="flow-label" x="745" y="137">← final response</text>
+        <text class="flow-label" x="595" y="274">saved state</text>
+        <text class="flow-label" x="295" y="274">private result</text>
         <g class="landlock-boundary">
           <rect x="620" y="220" width="240" height="140" rx="20" stroke-dasharray="5 5"/>
           <text x="630" y="238">LANDLOCK FILESYSTEM BOUNDARY</text>
@@ -431,7 +452,7 @@
         <g class="node" id="node-revision"><rect x="490" y="60" width="180" height="80" rx="15"/><text x="580" y="91">RevisionPreparer</text><text class="sub" x="580" y="111">clone + install + episodes</text><text class="sub" x="580" y="128">ValidationApplication</text></g>
         <g class="node" id="node-solution"><rect x="820" y="60" width="160" height="80" rx="15"/><text x="900" y="95">SolutionProcess</text><text class="sub" x="900" y="116">one per episode</text></g>
         <g class="node" id="node-worker"><rect x="650" y="250" width="180" height="80" rx="15"/><text x="740" y="285">AppWorld worker</text><text class="sub" x="740" y="306">new restricted process</text></g>
-        <g class="node" id="node-evaluator"><rect x="430" y="250" width="180" height="80" rx="15"/><text x="520" y="285">Private evaluator</text><text class="sub" x="520" y="306">new process · no agent code</text></g>
+        <g class="node" id="node-evaluator"><rect x="360" y="250" width="180" height="80" rx="15"/><text x="450" y="285">Private evaluator</text><text class="sub" x="450" y="306">new process · no agent code</text></g>
         <g class="node" id="node-evidence"><rect x="40" y="250" width="190" height="80" rx="15"/><text x="135" y="285">RunStore + metrics</text><text class="sub" x="135" y="306">sealed run evidence</text></g>
         <circle id="packet" cx="120" cy="100" r="9"/>
       </svg>
@@ -465,6 +486,34 @@
         </tbody>
       </table>
     </div>
+  </div>
+  <div class="panel evaluator-explainer">
+    <div class="verdict-banner"><span class="tag green">NO LLM-AS-A-JUDGE</span><strong>Programmatic verification, not another model’s opinion</strong></div>
+    <h3>Inside <code>appworld_worker.py --evaluate-task</code></h3>
+    <p class="muted">The language model produces the trajectory. It does not grade that trajectory. For fixed pinned AppWorld code/data and a fixed saved final state plus recorded answer, the evaluator runs deterministic Python and database assertions. The service never calls an LLM to decide pass/fail.</p>
+    <ol class="evaluation-pipeline">
+      <li><span>1</span><strong>Freeze the episode</strong><small>Public execution has closed. AppWorld has saved database state after each <code>world.execute</code> call.</small></li>
+      <li><span>2</span><strong>Load task + versions</strong><small><code>Task.load(task_id)</code> loads private task data, checks DB compatibility, and fixes the task’s evaluation datetime.</small></li>
+      <li><span>3</span><strong>Compare start and end state</strong><small>AppWorld loads the initial and final <code>ModelCollection</code> objects from the episode’s saved databases.</small></li>
+      <li><span>4</span><strong>Run task-specific Python tests</strong><small>The task’s evaluation module receives private/public data, models, and the recorded answer. It calls <code>test.case(...)</code> and <code>test.answer(...)</code>.</small></li>
+      <li><span>5</span><strong>Require every assertion</strong><small><code>TestTracker.success = (pass_count == num_tests)</code>. Failed assertions and traces go into a private report.</small></li>
+      <li><span>6</span><strong>Return evidence</strong><small>The parent service combines evaluator success with protocol and AppWorld completion, then retains the result/report in <code>benchmark.json</code>.</small></li>
+    </ol>
+    <div class="grid-2">
+      <div class="eval-kind">
+        <span class="tag dev">Answer task · Spotify example</span>
+        <h3>Normalized answer comparison</h3>
+        <p class="muted small">The answer recorded by <code>complete_task(answer=...)</code> is compared with the task’s private expected answer using AppWorld’s answer normalization and assertions. This is programmatic matching, not subjective grading.</p>
+        <code>test.answer(predicted_answer, ground_truth_answer)</code>
+      </div>
+      <div class="eval-kind">
+        <span class="tag dev">State task · Venmo / Phone examples</span>
+        <h3>Database and collateral checks</h3>
+        <p class="muted small">Task-specific assertions inspect final rows, relationships, messages, likes, and unintended model changes. The API sequence can differ; the required final state must be correct.</p>
+        <code>test.case(observed_state_condition, "==", expected_condition)</code>
+      </div>
+    </div>
+    <p class="callout small"><strong>What can still vary?</strong> Model sampling can produce different trajectories and final states across repeats. Once a final state and recorded answer are fixed, this verification procedure does not ask an LLM whether they look acceptable. An evaluator crash is an infrastructure failure; the service does not replace it with LLM judging.</p>
   </div>
   <div class="grid-3" style="margin-top:18px">
     <article class="panel layer-card"><h3>Presentation</h3><p><code>validation_cli.py</code>, <code>validation_cli_partial.py</code>, and the HTTP API expose profile discovery, full validation, and partial validation. Full runs reject inline changes.</p></article>
@@ -581,6 +630,27 @@
     </div>
   </div>
 
+  <div class="panel discovery-panel">
+    <div class="verdict-banner"><span class="tag amber">DISCOVERY IS PART OF THE TASK</span><strong>No task-specific API list is supplied in the prompt</strong></div>
+    <h3>How can the agent find <code>apis.venmo.show_social_feed</code>?</h3>
+    <p class="muted">The protocol’s <code>tools</code> array contains only the generic <code>execute_code</code> tool. It does not contain all 457 AppWorld APIs and does not name a required API for the current task. The task does include public app descriptions, and the profile instructions tell the agent to use the public API Docs helper.</p>
+    <ol class="discovery-flow">
+      <li><span>1</span><strong>Read the words</strong><small>The instruction itself says “venmo transactions” and “venmo social feed.” The agent uses language understanding to form candidate app and concept names.</small></li>
+      <li><span>2</span><strong>Inspect public app descriptions</strong><small><code>app_descriptions</code> identifies Venmo and the API Docs helper. No private required-app or required-API field is present.</small></li>
+      <li><span>3</span><strong>Search or list public APIs</strong><small>The agent can call <code>show_api_descriptions(app_name="venmo")</code> or <code>search_api_docs(query="venmo social feed transactions")</code>.</small></li>
+      <li><span>4</span><strong>Match description, then inspect schema</strong><small>A candidate named <code>show_social_feed</code> has the public description “Show your social feed (transactions of your friends).” The agent can call <code>show_api_doc</code> for parameters and responses.</small></li>
+    </ol>
+    <pre class="code-block"><code># Public discovery calls available inside execute_code:
+apis.api_docs.show_api_descriptions(app_name="venmo")
+# → public [{name: "show_social_feed", description: "Show your social feed ..."}, ...]
+
+apis.api_docs.show_api_doc(app_name="venmo", api_name="show_social_feed")
+# → public GET /venmo/social_feed schema
+
+feed = apis.venmo.show_social_feed(access_token=token)
+# → public transaction records</code></pre>
+    <p class="callout small"><strong>This is not an oracle.</strong> The agent must infer relevance, explore, and recover from poor choices. It can select the wrong API or fail to discover a useful one. Neither a hidden required-API list nor a reference plan is sent to it.</p>
+  </div>
   <div class="section-head" style="margin-top:30px">
     <div><p class="kicker">Original instruction cards</p><h2>Four different task shapes</h2></div>
     <p>No answers or reference code are shown. The next panel expands these same examples into animated trajectories.</p>
@@ -1034,13 +1104,13 @@ Everything else, including other episodes
         outcome: "No transaction has changed; all three gates are pending.", gates: ["pending", "pending", "pending"]
       },
       {
-        actor: "Agent sees this", title: "Read the social feed schema and records",
-        text: "The public feed provides transaction IDs, timestamps, senders, receivers, and like metadata.",
-        code: "feed = apis.venmo.show_social_feed(access_token=token)\n# GET /venmo/social_feed\n# response: [{transaction_id, created_at, sender, receiver, like_count, ...}]",
-        observation: "Illustrative public feed: transactions with different dates and participants.",
-        owner: "Public observation", aside: "Filter before mutation",
-        checks: "The agent filters to the current date and roommate identities, leaving unrelated transactions untouched.",
-        outcome: "A candidate transaction set is computed; this is still only the agent’s selection.", gates: ["pending", "pending", "pending"]
+        actor: "Agent sees this", title: "Discover why show_social_feed is relevant",
+        text: "The instruction mentions Venmo and a social feed. Public app descriptions point to Venmo; API Docs then lists public names and descriptions. No required API was supplied in the prompt.",
+        code: "descriptions = apis.api_docs.show_api_descriptions(app_name='venmo')\n# candidate: name='show_social_feed'\n# description='Show your social feed (transactions of your friends).'\ndoc = apis.api_docs.show_api_doc(app_name='venmo', api_name='show_social_feed')\nfeed = apis.venmo.show_social_feed(access_token=token)\n# GET /venmo/social_feed",
+        observation: "Public discovery result: show_social_feed matches the instruction’s app and concept. Its schema returns transaction_id, created_at, sender, receiver, and other feed fields.",
+        owner: "Public discovery", aside: "Infer relevance, search, then inspect schema",
+        checks: "The agent could also search_api_docs with 'venmo social feed transactions'. It must choose among candidates; the validator does not reveal the required endpoint.",
+        outcome: "The agent has found a plausible read API, but discovery success does not imply task success.", gates: ["pending", "pending", "pending"]
       },
       {
         actor: "Agent + AppWorld", title: "Like only the selected transactions",
