@@ -303,6 +303,7 @@ class ValidationApplication:
                 "platform": platform.platform(),
                 "dependencies": {},
                 "validator": None,
+                "benchmark": benchmark_identity(resolved),
             },
             environment_variables_forwarded=sorted(
                 set(resolved.profile.environment.passthrough)
@@ -339,6 +340,22 @@ class ValidationApplication:
                 store.mark_failed(run_configuration, str(error))
         except Exception:
             pass
+
+
+def benchmark_identity(resolved: ResolvedProfile) -> dict[str, Any]:
+    identity: dict[str, Any] = {"name": resolved.profile.benchmark}
+    settings = resolved.profile.appworld
+    if settings is not None:
+        identity.update(
+            {
+                "package_version": settings.package_version,
+                "source_commit": settings.source_commit,
+                "data_version": settings.data_version,
+                "wheel_sha256": settings.wheel_sha256,
+                "data_sha256": settings.data_sha256,
+            }
+        )
+    return identity
 
 
 def error_details(exc: BaseException) -> dict[str, Any]:

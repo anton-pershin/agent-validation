@@ -106,7 +106,15 @@ def test_keyboard_interrupt_marks_run_aborted(service_settings, monkeypatch) -> 
 
 
 def test_terminal_run_rejects_writes_and_later_run_preserves_it(tmp_path: Path) -> None:
-    store = RunStore(tmp_path / "artifacts", "terminal-run")
+    store = RunStore(tmp_path / "artifacts", "terminal-run", {"benchmark-secret"})
+    store.write_benchmark_evidence(
+        "episode",
+        {"evaluation_report": "benchmark-secret"},
+        "worker saw benchmark-secret",
+    )
+    episode = store.run_directory / "episodes" / "episode"
+    assert "benchmark-secret" not in (episode / "benchmark.json").read_text()
+    assert "benchmark-secret" not in (episode / "benchmark-stderr.log").read_text()
     manifest = _manifest(store)
     store.write_run_configuration(manifest)
     result = ValidationResult(
@@ -121,6 +129,8 @@ def test_terminal_run_rejects_writes_and_later_run_preserves_it(tmp_path: Path) 
     assert json.loads((store.run_directory / "result.json").read_text()) == result.to_response()
     with pytest.raises(StorageError, match="terminal"):
         store.write_json("late.json", {"not": "allowed"})
+    with pytest.raises(StorageError, match="terminal"):
+        store.write_benchmark_evidence("episode", {"late": True}, "late")
     with pytest.raises(StorageError, match="terminal"):
         store.mark_failed(manifest, "late failure")
     later = RunStore(tmp_path / "artifacts", "later-run")

@@ -1,4 +1,6 @@
 name: default
+benchmark: blocks_world
+appworld: null
 solution_module: reliable_agent_pddl
 random_seed: 0
 original_instructions: >-
@@ -8,44 +10,64 @@ original_instructions: >-
 tasks:
   - id: stack_ab
     problem: ../blocks_world/problems/stack_ab.pddl
+    split: null
   - id: unstack_ab
     problem: ../blocks_world/problems/unstack_ab.pddl
+    split: null
   - id: restack_abc
     problem: ../blocks_world/problems/restack_abc.pddl
+    split: null
   - id: stack_three
     problem: ../blocks_world/problems/stack_three.pddl
+    split: null
   - id: move_c
     problem: ../blocks_world/problems/move_c.pddl
+    split: null
   - id: stack_bc
     problem: ../blocks_world/problems/stack_bc.pddl
+    split: null
   - id: stack_ca
     problem: ../blocks_world/problems/stack_ca.pddl
+    split: null
   - id: stack_ba
     problem: ../blocks_world/problems/stack_ba.pddl
+    split: null
   - id: stack_cb
     problem: ../blocks_world/problems/stack_cb.pddl
+    split: null
   - id: stack_ac
     problem: ../blocks_world/problems/stack_ac.pddl
+    split: null
   - id: stack_ba_on_c
     problem: ../blocks_world/problems/stack_ba_on_c.pddl
+    split: null
   - id: stack_ca_on_b
     problem: ../blocks_world/problems/stack_ca_on_b.pddl
+    split: null
   - id: unstack_ba
     problem: ../blocks_world/problems/unstack_ba.pddl
+    split: null
   - id: unstack_ca
     problem: ../blocks_world/problems/unstack_ca.pddl
+    split: null
   - id: unstack_bc
     problem: ../blocks_world/problems/unstack_bc.pddl
+    split: null
   - id: restack_bca
     problem: ../blocks_world/problems/restack_bca.pddl
+    split: null
   - id: restack_cab
     problem: ../blocks_world/problems/restack_cab.pddl
+    split: null
   - id: restack_bac
     problem: ../blocks_world/problems/restack_bac.pddl
+    split: null
   - id: tower_four
     problem: ../blocks_world/problems/tower_four.pddl
+    split: null
   - id: unstack_tower
     problem: ../blocks_world/problems/unstack_tower.pddl
+    split: null
 prompt_variants:
   - id: concise
     instructions: >-

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from agent_validation.application import ServiceSettings
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_SOLUTION = ROOT / "tests" / "fixtures" / "scripted_solution"
+FAKE_APPWORLD_PACKAGE = ROOT / "tests" / "fixtures" / "fake_appworld"
 STACK_PROBLEM = ROOT / "config" / "blocks_world" / "problems" / "stack_ab.pddl"
 
 
@@ -91,6 +93,31 @@ def git_solution(tmp_path: Path) -> tuple[Path, str, str]:
     _git(repo, "commit", "-qm", "Second scripted revision")
     second = _git(repo, "rev-parse", "HEAD")
     return repo, first, second
+
+
+@pytest.fixture
+def fake_appworld_runtime(tmp_path: Path, monkeypatch) -> Path:
+    root = tmp_path / "appworld-root"
+    (root / "data" / "datasets").mkdir(parents=True)
+    for task_id in ("task_one", "task_two", "eval_fail", "eval_crash", "data_mismatch"):
+        ground_truth = root / "data" / "tasks" / task_id / "ground_truth"
+        ground_truth.mkdir(parents=True)
+        (ground_truth / "answer.json").write_text(
+            '"FAKE_GROUND_TRUTH_SECRET"', encoding="utf-8"
+        )
+    runtime = tmp_path / "fake-appworld-runtime"
+    subprocess.run([sys.executable, "-m", "venv", str(runtime)], check=True)
+    site_packages = (
+        runtime
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+    )
+    shutil.copytree(FAKE_APPWORLD_PACKAGE / "appworld", site_packages / "appworld")
+    python = runtime / "bin" / "python"
+    monkeypatch.setenv("AGENT_VALIDATION_APPWORLD_PYTHON", str(python))
+    monkeypatch.setenv("AGENT_VALIDATION_APPWORLD_ROOT", str(root))
+    return root
 
 
 def _git(repo: Path, *arguments: str) -> str:

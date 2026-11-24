@@ -42,7 +42,7 @@ class PlannedEpisode(ContractModel):
     repeat: int = Field(ge=1)
     instructions: str
     task_input: str
-    problem_path: str
+    problem_path: str | None = None
     fault_scenario_id: str | None = None
 
 
